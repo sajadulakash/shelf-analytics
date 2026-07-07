@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShelfAnalytics | Explore Process</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="assets/js/vendor/jspdf.umd.min.js"></script>
+  <link rel="stylesheet" href="assets/css/app.css">
+  <script src="assets/js/config.js"></script>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>
+          <strong>ShelfAnalytics</strong>
+          <span>Step-by-step shelf image pipeline</span>
+        </span>
+      </a>
+      <div class="row" style="margin-top: 0;">
+        <a class="top-link" href="index.html">Get Task Report</a>
+        <a class="top-link" href="labels.html">Manage Labels</a>
+      </div>
+    </header>
+
+
+
+    <section class="card" id="labelsCard">
+      <h2>Configured Labels</h2>
+      <p class="sub">This saved label set is used to decide matched results and missing labels in the final report.</p>
+      <div class="chips" id="activeLabels"></div>
+    </section>
+
+    <section class="card" id="uploadCard">
+      <h2>Upload Raw Shelf Image</h2>
+      <p class="sub">Upload one raw shelf image. The system will detect products first, show crops immediately, then classify and generate the report.</p>
+
+      <label class="upload-box" id="dropZone">
+        <input type="file" id="fileInput" accept="image/*">
+        <strong>Select or Drop Image</strong>
+      </label>
+
+      <div class="upload-preview" id="uploadPreview">
+        <img id="uploadPreviewImg" alt="Raw upload preview">
+      </div>
+
+      <div class="row">
+        <button class="btn" id="runBtn" disabled>Run Step-by-Step Pipeline</button>
+        <span class="status">YOLO best.pt + SwinV2 local classifier</span>
+      </div>
+
+      <div class="spinner" id="spinner">Starting pipeline...</div>
+      <div class="error" id="errorMsg"></div>
+    </section>
+
+    <section class="card hidden" id="detectionCard">
+      <h2>2. Detected Products (Bounding Boxes)</h2>
+      <p class="sub" id="detectionInfo"></p>
+      <img class="detected-image" id="detectionImage" alt="Detected products">
+    </section>
+
+    <section class="card hidden" id="cropsCard">
+      <h2>3. Cropped Product Images</h2>
+      <p class="sub">Detected product crops are shown here before classification.</p>
+      <div class="grid" id="cropsGrid"></div>
+    </section>
+
+    <section class="card hidden" id="classifiedCard">
+      <h2>4. Classified Products</h2>
+      <p class="sub">Each cropped product is classified locally using the SwinV2 model.</p>
+      <div class="grid" id="classifiedGrid"></div>
+    </section>
+
+    <section class="card hidden" id="reportCard">
+      <h2>5. Report</h2>
+      <p class="sub">Classification results and label summary.</p>
+      <div class="report-shell">
+        <div class="report-document" id="reportDocument">
+          <h3 class="report-document-title">Classification Report</h3>
+          <p class="report-document-subtitle">This report summarizes the current shelf image analysis with product counts, matched labels, and configured labels that were not detected in the uploaded image.</p>
+          <section class="report-document-section">
+            <h3>Summary Metrics</h3>
+            <div class="report-grid" id="reportMetrics"></div>
+          </section>
+          <section class="report-document-section">
+            <div class="list">
+              <strong>Detected Label Counts</strong>
+              <div class="chips" id="labelCounts"></div>
+            </div>
+          </section>
+          <section class="report-document-section">
+            <div class="list list-gap">
+              <strong>Configured Labels Not Found In This Image</strong>
+              <div class="chips" id="missingLabels"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+      <button class="download-btn" id="downloadPdfBtn">Download Report as PDF</button>
+    </section>
+  </div>
+
+  <script src="assets/js/process.js"></script>
+</body>
+</html>

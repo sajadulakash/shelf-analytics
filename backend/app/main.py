@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from collections import Counter
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -45,10 +45,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
 # ---------- Global error handler ----------
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -65,28 +61,15 @@ async def health():
     return {"status": "ok"}
 
 
-# ---------- Frontend ----------
+# ---------- API root ----------
 @app.get("/")
 async def root():
-    return FileResponse(str(STATIC_DIR / "index.html"))
-
-
-@app.get("/labels")
-async def labels_page():
-    return FileResponse(
-        str(STATIC_DIR / "labels.html"),
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
-
-
-@app.get("/con")
-async def confidence_page():
-    return FileResponse(str(STATIC_DIR / "con.html"))
-
-
-@app.get("/process")
-async def process_page():
-    return FileResponse(str(STATIC_DIR / "process.html"))
+    return {
+        "service": "ShelfAnalytics – Product Classification Service",
+        "version": app.version,
+        "docs": "/docs",
+        "health": "/health",
+    }
 
 
 def _normalize_labels(labels: list[str]) -> list[str]:
