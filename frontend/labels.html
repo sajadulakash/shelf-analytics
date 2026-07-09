@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShelfAnalytics | Manage Labels</title>
+  <title>ShelfAnalytics | Model Configuration</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
@@ -17,19 +17,38 @@
         <span class="brand-mark" aria-hidden="true"></span>
         <span>
           <strong>ShelfAnalytics</strong>
-          <span>Label management</span>
+          <span>Model configuration</span>
         </span>
       </a>
-      <div class="top-links">
+      <nav class="top-links">
         <a class="top-link" href="index.html">Get Task Report</a>
         <a class="top-link" href="process.html">Explore Process</a>
-      </div>
+        <a class="top-link active" aria-current="page" href="labels.html">Model Configuration</a>
+        <a class="top-link" href="data-dump.html">Database Data Dump</a>
+      </nav>
     </header>
 
     <section class="card">
-      <h1>Manage Labels</h1>
-      <p class="sub">This page is in progress and will be implemented later.</p>
-      <div class="note">The Manage Labels feature is not available yet. Please use the Task Report and Explore Process pages for now.</div>
+      <h1>Model Configuration</h1>
+      <p class="sub">Choose which trained models the system uses for the pipeline. Pick a YOLO detection model and a SwinV2 classification model &mdash; useful when you have multiple trained versions and want to compare them.</p>
+
+      <div class="config-grid">
+        <label class="field">
+          <span class="field-label">Detection model (YOLO)</span>
+          <select disabled>
+            <option>best.pt (current)</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Classification model (SwinV2)</span>
+          <select disabled>
+            <option>swinv2_model (current)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="note">This page is a placeholder. Model selection is not wired up yet &mdash; the dropdowns will be populated with your trained model versions and saved once the backend is implemented.</div>
     </section>
   </div>
 </body>

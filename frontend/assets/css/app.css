@@ -74,6 +74,13 @@
       font-size: 0.88rem;
     }
 
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
     .top-link {
       text-decoration: none;
       border-radius: 8px;
@@ -83,6 +90,14 @@
       padding: 10px 16px;
       background: #ffffff;
       cursor: pointer;
+    }
+
+    .top-link:hover { border-color: #111111; }
+
+    .top-link.active {
+      background: #111111;
+      color: #ffffff;
+      border-color: #111111;
     }
 
     .card {

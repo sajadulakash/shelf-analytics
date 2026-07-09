@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShelfAnalytics | Database Data Dump</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/labels.css">
+  <script src="assets/js/config.js"></script>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>
+          <strong>ShelfAnalytics</strong>
+          <span>Database data dump</span>
+        </span>
+      </a>
+      <nav class="top-links">
+        <a class="top-link" href="index.html">Get Task Report</a>
+        <a class="top-link" href="process.html">Explore Process</a>
+        <a class="top-link" href="labels.html">Model Configuration</a>
+        <a class="top-link active" aria-current="page" href="data-dump.html">Database Data Dump</a>
+      </nav>
+    </header>
+
+    <section class="card">
+      <h1>Database Data Dump</h1>
+      <p class="sub">Upload a CSV of images to process in bulk. Each row has an <strong>image_id</strong> and a <strong>url</strong>. The system will download each image, detect and classify its products, then dump the results into the Postgres database automatically.</p>
+
+      <div class="note">Expected CSV columns: <code>image_id, url</code> &mdash; one image per row.</div>
+
+      <div class="upload-row">
+        <span class="upload-box" aria-disabled="true">Select CSV File</span>
+        <button class="btn" type="button" disabled>Run &amp; Dump to Database</button>
+      </div>
+
+      <div class="note">This page is a placeholder. CSV upload, image download, inference, and the Postgres dump are not implemented yet &mdash; the UI and backend will be added later.</div>
+    </section>
+  </div>
+</body>
+</html>
