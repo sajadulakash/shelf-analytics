@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from collections import Counter
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -61,14 +61,44 @@ async def health():
     return {"status": "ok"}
 
 
+def _frontend_file(page_name: str) -> FileResponse:
+    page_path = config.FRONTEND_DIR / page_name
+    if not page_path.exists():
+        raise HTTPException(status_code=404, detail=f"Frontend page not found: {page_name}")
+    return FileResponse(page_path, headers={"Cache-Control": "no-store"})
+
+
+# ---------- Frontend pages ----------
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+async def frontend_index():
+    return _frontend_file("index.html")
+
+
+@app.get("/process.html", include_in_schema=False)
+async def frontend_process():
+    return _frontend_file("process.html")
+
+
+@app.get("/labels.html", include_in_schema=False)
+async def frontend_labels():
+    return _frontend_file("labels.html")
+
+
+@app.get("/con.html", include_in_schema=False)
+async def frontend_confidence():
+    return _frontend_file("con.html")
+
+
 # ---------- API root ----------
-@app.get("/")
+@app.get("/api")
 async def root():
     return {
         "service": "ShelfAnalytics – Product Classification Service",
         "version": app.version,
         "docs": "/docs",
         "health": "/health",
+        "frontend": "/",
     }
 
 
@@ -620,6 +650,13 @@ async def classify_detected_crops(
     )
 
 
-# ---------- Serve uploaded images (must be AFTER all route definitions) ----------
+# ---------- Serve frontend/uploaded static files (must be AFTER all route definitions) ----------
+if config.FRONTEND_DIR.exists():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(config.FRONTEND_DIR / "assets")),
+        name="frontend-assets",
+    )
+
 UPLOADS_DIR = config.BASE_DIR / "uploads"
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
