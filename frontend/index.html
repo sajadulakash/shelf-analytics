@@ -3,63 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShelfAnalytics | Get Task Report</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
-  <script src="assets/js/vendor/jspdf.umd.min.js"></script>
-  <link rel="stylesheet" href="assets/css/app.css">
-  <script src="assets/js/config.js"></script>
+  <title>ShelfAnalytics</title>
+  <meta http-equiv="refresh" content="0; url=process.html">
+  <script>location.replace("process.html");</script>
 </head>
 <body>
-  <div class="page">
-    <header class="topbar">
-      <a class="brand" href="index.html">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span>
-          <strong>ShelfAnalytics</strong>
-          <span>Shop folder analysis and product report</span>
-        </span>
-      </a>
-      <nav class="top-links">
-        <a class="top-link active" aria-current="page" href="index.html">Get Task Report</a>
-        <a class="top-link" href="process.html">Explore Process</a>
-        <a class="top-link" href="labels.html">Model Configuration</a>
-        <a class="top-link" href="data-dump.html">Database Data Dump</a>
-      </nav>
-    </header>
-
-    <section class="card" id="taskCard">
-      <h2>Get Task Report</h2>
-      <p class="sub">Analyze every shop folder from the backend path. Each direct folder under that path is treated as one shop, and all images inside that folder are counted together.</p>
-      <div class="row">
-        <button class="btn" id="getTaskReportBtn">Get Task Report</button>
-        <span class="status" id="shopPath">Loading shop folder path...</span>
-      </div>
-      <div class="task-log" id="taskLog"></div>
-      <div class="error" id="taskErrorMsg"></div>
-    </section>
-
-    <section class="card hidden" id="batchReportCard">
-      <h2>Task Report</h2>
-      <p class="sub">Product counts by shop. The first column is the shop name; every other column is a product label.</p>
-      <div class="report-grid" id="batchMetrics"></div>
-      <div class="table-wrap" id="batchTableWrap"></div>
-      <button class="download-btn" id="downloadTaskPdfBtn">Download Task Report as PDF</button>
-    </section>
-
-    <section class="card" id="labelsCard">
-      <h2>Configured Labels</h2>
-      <p class="sub">This saved label set is used to decide matched results and missing labels in the final report.</p>
-      <div class="chips" id="activeLabels"></div>
-    </section>
-
-
-
-
-
-  </div>
-
-  <script src="assets/js/index.js"></script>
+  <p>Redirecting to <a href="process.html">Explore Process</a>…</p>
 </body>
 </html>

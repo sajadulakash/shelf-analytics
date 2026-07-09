@@ -14,10 +14,8 @@ const API_BASE = window.API_BASE || "";
     const classifiedCard = document.getElementById("classifiedCard");
     const reportCard = document.getElementById("reportCard");
     const downloadPdfBtn = document.getElementById("downloadPdfBtn");
-    const activeLabels = document.getElementById("activeLabels");
 
     let currentReportData = null;
-    let configuredLabels = [];
 
     const detectionInfo = document.getElementById("detectionInfo");
     const detectionImage = document.getElementById("detectionImage");
@@ -28,8 +26,6 @@ const API_BASE = window.API_BASE || "";
     const missingLabels = document.getElementById("missingLabels");
 
     let selectedFile = null;
-
-    loadActiveLabels();
 
     dropZone.addEventListener("dragover", (event) => {
       event.preventDefault();
@@ -77,24 +73,6 @@ const API_BASE = window.API_BASE || "";
       labelCounts.innerHTML = "";
       missingLabels.innerHTML = "";
       errorMsg.style.display = "none";
-    }
-
-    async function loadActiveLabels() {
-      try {
-        const response = await fetch(API_BASE + "/api/labels");
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || data.error || "Failed to load labels.");
-        }
-
-        activeLabels.innerHTML = "";
-        configuredLabels = data.labels || [];
-        configuredLabels.forEach((label) => {
-          activeLabels.appendChild(chip(label));
-        });
-      } catch (error) {
-        showError(error.message || "Failed to load labels.");
-      }
     }
 
 

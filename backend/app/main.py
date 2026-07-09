@@ -85,6 +85,11 @@ async def frontend_labels():
     return _frontend_file("labels.html")
 
 
+@app.get("/data-dump.html", include_in_schema=False)
+async def frontend_data_dump():
+    return _frontend_file("data-dump.html")
+
+
 @app.get("/con.html", include_in_schema=False)
 async def frontend_confidence():
     return _frontend_file("con.html")
@@ -120,9 +125,14 @@ def _label_key(label: str) -> str:
 
 
 def _is_unknown_report_label(label: str) -> bool:
+    key = _label_key(label)
+    # Treat any "unknown*" class (unknown, unknown-products, unknown_53, ...) as
+    # the unknown bucket so it is never counted as a matched/missing product.
+    if key.startswith("unknown"):
+        return True
     unknown_keys = {_label_key(item) for item in config.UNKNOWN_PRODUCT_LABELS}
     unknown_keys.add(_label_key(UNKNOWN_REPORT_LABEL))
-    return _label_key(label) in unknown_keys
+    return key in unknown_keys
 
 
 def _load_managed_labels() -> list[str] | None:

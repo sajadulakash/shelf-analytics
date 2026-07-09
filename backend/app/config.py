@@ -59,11 +59,13 @@ SAHI_OVERLAP_RATIO = float(os.environ.get("SAHI_OVERLAP_RATIO", "0.2"))
 SAHI_CONFIDENCE_THRESHOLD = float(os.environ.get("SAHI_CONFIDENCE_THRESHOLD", "0.25"))
 # Slice-boundary merge. A product taller/wider than a slice is split across
 # tiles; GREEDYNMM with the IOS (intersection-over-smaller) metric merges those
-# fragments back into one box, where plain NMS would leave both. Threshold 0.3
-# merges the split halves without fusing distinct neighbouring products.
+# fragments back into one box, where plain NMS would leave both. Lower threshold
+# merges more aggressively (fewer overlapping/duplicate boxes); higher keeps more
+# separate. 0.2 clears duplicate overlaps on dense shelves while still keeping
+# distinct neighbouring products apart.
 SAHI_POSTPROCESS_TYPE = os.environ.get("SAHI_POSTPROCESS_TYPE", "GREEDYNMM")
 SAHI_MATCH_METRIC = os.environ.get("SAHI_MATCH_METRIC", "IOS")
-SAHI_MATCH_THRESHOLD = float(os.environ.get("SAHI_MATCH_THRESHOLD", "0.3"))
+SAHI_MATCH_THRESHOLD = float(os.environ.get("SAHI_MATCH_THRESHOLD", "0.2"))
 
 # Max concurrent crop classifications (Vision + Gemini calls)
 CLASSIFICATION_CONCURRENCY = int(os.environ.get("CLASSIFICATION_CONCURRENCY", "3"))

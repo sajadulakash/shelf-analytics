@@ -93,8 +93,13 @@ def _label_key(label: str) -> str:
 
 
 def _is_unknown_product_label(label: str) -> bool:
+    key = _label_key(label)
+    # Any class named like "unknown", "unknown-products", "unknown_53", ... is an
+    # unknown bucket, never a matched product.
+    if key.startswith("unknown"):
+        return True
     unknown_keys = {_label_key(item) for item in config.UNKNOWN_PRODUCT_LABELS}
-    return _label_key(label) in unknown_keys
+    return key in unknown_keys
 
 
 def classify_single(
