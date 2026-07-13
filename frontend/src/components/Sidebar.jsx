@@ -1,118 +1,67 @@
 import { NavLink } from "react-router-dom";
 
-function Icon({ path }) {
-  return (
-    <svg
-      className="h-5 w-5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {path}
-    </svg>
-  );
-}
-
 const NAV = [
-  {
-    to: "/",
-    label: "Explore Process",
-    icon: <Icon path={<><path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" /></>} />,
-  },
-  {
-    to: "/models",
-    label: "Model Configuration",
-    icon: (
-      <Icon
-        path={
-          <>
-            <line x1="4" y1="6" x2="20" y2="6" />
-            <line x1="4" y1="12" x2="20" y2="12" />
-            <line x1="4" y1="18" x2="20" y2="18" />
-            <circle cx="9" cy="6" r="2" fill="currentColor" />
-            <circle cx="15" cy="12" r="2" fill="currentColor" />
-            <circle cx="8" cy="18" r="2" fill="currentColor" />
-          </>
-        }
-      />
-    ),
-  },
-  {
-    to: "/data-dump",
-    label: "Database Data Dump",
-    icon: (
-      <Icon
-        path={
-          <>
-            <ellipse cx="12" cy="5" rx="8" ry="3" />
-            <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
-            <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
-          </>
-        }
-      />
-    ),
-  },
-  {
-    to: "/confidence",
-    label: "Confidence",
-    icon: (
-      <Icon
-        path={
-          <>
-            <path d="M4 19V5" />
-            <path d="M4 19h16" />
-            <path d="M8 16l3-4 3 2 4-6" />
-          </>
-        }
-      />
-    ),
-  },
+  { to: "/", label: "Explore Process" },
+  { to: "/models", label: "Model Configuration" },
+  { to: "/data-dump", label: "Database Data Dump" },
+  { to: "/confidence", label: "Confidence" },
 ];
 
 export default function Sidebar() {
   return (
-    <aside className="sticky top-0 hidden h-screen w-64 flex-none flex-col border-r border-slate-200 bg-white/80 backdrop-blur md:flex">
-      <div className="flex items-center gap-3 px-5 py-6">
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-slate-800 to-slate-950 text-white shadow-sm">
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M4 7h16M4 12h16M4 17h10" strokeLinecap="round" />
+    <aside className="sticky top-0 hidden h-screen w-72 flex-none flex-col overflow-hidden bg-ink px-6 pb-6 pt-7 text-white md:flex">
+      {/* Brand */}
+      <div className="flex items-center gap-3">
+        <span className="grid h-10 w-10 place-items-center rounded-md border border-[#39443e] bg-[#171f1b] text-brandbright">
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 9h18M8 4v16" strokeLinecap="round" />
           </svg>
-        </div>
+        </span>
         <div className="leading-tight">
-          <div className="font-display text-lg font-semibold text-slate-900">ShelfAnalytics</div>
-          <div className="text-xs text-slate-500">Shelf intelligence</div>
+          <strong className="block text-[0.95rem] font-bold">ShelfAnalytics</strong>
+          <span className="text-[0.68rem] text-[#87928b]">Shelf intelligence</span>
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 px-3 py-2">
-        {NAV.map((item) => (
+      {/* Flow-timeline navigation */}
+      <nav className="mt-16 grid" aria-label="Sections">
+        {NAV.map((item, i) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === "/"}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+              `relative grid min-h-[58px] content-center gap-0.5 border-l pl-8 transition ${
                 isActive
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  ? "border-brandbright text-white"
+                  : "border-[#344039] text-[#667169] hover:text-[#aeb6b0]"
               }`
             }
           >
-            {item.icon}
-            {item.label}
+            {({ isActive }) => (
+              <>
+                <span
+                  className={`absolute left-[-4px] top-[26px] h-[7px] w-[7px] rounded-full ${
+                    isActive ? "bg-brandbright shadow-[0_0_0_4px_rgba(45,212,134,0.14)]" : "bg-[#344039]"
+                  }`}
+                />
+                <span className="mono text-[0.62rem]">{String(i + 1).padStart(2, "0")}</span>
+                <strong className="text-[0.78rem] font-semibold">{item.label}</strong>
+              </>
+            )}
           </NavLink>
         ))}
       </nav>
 
-      <div className="px-5 py-5 text-xs text-slate-400">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          YOLO + SAHI · SwinV2
-        </div>
-        <div className="mt-1">v1.0</div>
+      {/* Status */}
+      <div className="mt-auto flex items-center gap-2 text-[0.68rem] text-[#87928b]">
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path d="M5 12.5a10 10 0 0114 0M8.5 16a5 5 0 017 0" strokeLinecap="round" />
+          <circle cx="12" cy="19" r="1" fill="currentColor" />
+        </svg>
+        <span>Local · GPU</span>
+        <i className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-brandbright" />
       </div>
     </aside>
   );

@@ -17,6 +17,7 @@ export default function ModelConfig() {
   return (
     <>
       <PageHeader
+        kicker="Configuration"
         title="Model Configuration"
         subtitle="Choose the models the pipeline runs."
       />
@@ -53,7 +54,7 @@ export default function ModelConfig() {
             {saving ? "Saving…" : "Save configuration"}
           </Button>
           {saved && !saving && (
-            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand">
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -62,7 +63,7 @@ export default function ModelConfig() {
           )}
         </div>
 
-        <p className="mt-6 text-xs text-slate-400">Preview only — simulated, no backend yet.</p>
+        <p className="mono mt-6 text-xs text-muted">Preview only — simulated, no backend yet.</p>
       </Card>
     </>
   );

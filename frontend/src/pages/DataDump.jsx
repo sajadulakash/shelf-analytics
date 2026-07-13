@@ -12,7 +12,7 @@ const STEPS = [
 export default function DataDump() {
   const [fileName, setFileName] = useState("");
   const [running, setRunning] = useState(false);
-  const [current, setCurrent] = useState(-1); // index of active step, STEPS.length = done
+  const [current, setCurrent] = useState(-1);
   const inputRef = useRef(null);
   const timers = useRef([]);
 
@@ -37,16 +37,17 @@ export default function DataDump() {
   return (
     <>
       <PageHeader
+        kicker="Pipeline"
         title="Database Data Dump"
         subtitle="CSV of image_id, url → detect, classify, dump to Postgres."
       />
 
-      <Card className="p-7">
+      <Card className="p-6">
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-dashed border-line bg-paper px-4 text-sm font-bold text-[#344039] transition hover:border-brand hover:bg-[#f8faf8]"
           >
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 16V4m0 0L8 8m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
@@ -54,14 +55,8 @@ export default function DataDump() {
             </svg>
             Select CSV
           </button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={(e) => setFileName(e.target.files?.[0]?.name || "")}
-          />
-          <span className="rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-500">
+          <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={(e) => setFileName(e.target.files?.[0]?.name || "")} />
+          <span className="mono rounded-md border border-line bg-[#f8faf8] px-3 py-2 text-sm text-muted">
             {fileName || "No file chosen"}
           </span>
           <Button onClick={run} disabled={!fileName || running}>
@@ -73,18 +68,13 @@ export default function DataDump() {
         {current >= 0 && (
           <div className="mt-8">
             <div className="mb-2 flex items-baseline justify-between">
-              <span className="text-sm font-semibold text-slate-700">
+              <span className="text-sm font-semibold text-ink">
                 {done ? "Complete" : STEPS[Math.min(current, STEPS.length - 1)].label}
               </span>
-              <span className="text-sm font-semibold tabular-nums text-slate-500">
-                {done ? 100 : pct}%
-              </span>
+              <span className="mono text-sm font-semibold text-muted">{done ? 100 : pct}%</span>
             </div>
-            <div className="mb-6 h-2.5 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-[width] duration-500"
-                style={{ width: `${done ? 100 : pct}%` }}
-              />
+            <div className="mb-6 h-2 overflow-hidden rounded-full bg-[#e3e8e4]">
+              <div className="h-full rounded-full bg-brand transition-[width] duration-500" style={{ width: `${done ? 100 : pct}%` }} />
             </div>
 
             <ol className="relative">
@@ -93,19 +83,15 @@ export default function DataDump() {
                 return (
                   <li key={step.label} className="relative grid grid-cols-[34px_1fr] gap-3 pb-5 last:pb-0">
                     {i < STEPS.length - 1 && (
-                      <span
-                        className={`absolute left-4 top-9 -bottom-1 w-0.5 ${
-                          state === "done" ? "bg-emerald-500" : "bg-slate-200"
-                        }`}
-                      />
+                      <span className={`absolute left-4 top-9 -bottom-1 w-0.5 ${state === "done" ? "bg-brand" : "bg-line"}`} />
                     )}
                     <span
                       className={`z-10 grid h-8 w-8 place-items-center rounded-full border-2 ${
                         state === "done"
-                          ? "border-emerald-500 bg-emerald-500 text-white"
+                          ? "border-brand bg-brand text-white"
                           : state === "active"
-                            ? "border-slate-900 border-t-transparent animate-spin"
-                            : "border-slate-300 bg-white"
+                            ? "border-brand border-t-transparent animate-spin"
+                            : "border-line bg-paper"
                       }`}
                     >
                       {state === "done" && (
@@ -115,8 +101,8 @@ export default function DataDump() {
                       )}
                     </span>
                     <div className={state === "pending" ? "opacity-50" : ""}>
-                      <div className="font-semibold text-slate-800">{step.label}</div>
-                      <div className="text-sm text-slate-500">
+                      <div className="font-semibold text-ink">{step.label}</div>
+                      <div className="mono text-sm text-muted">
                         {state === "done" ? step.sub : state === "active" ? "Working…" : ""}
                       </div>
                     </div>
@@ -126,8 +112,8 @@ export default function DataDump() {
             </ol>
 
             {done && (
-              <div className="mt-6 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-500 text-white">
+              <div className="mt-6 flex items-center gap-3 rounded-md border border-[#bfe3cd] bg-brandsoft px-4 py-3 text-sm font-semibold text-brand">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-brand text-white">
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                     <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
@@ -138,7 +124,7 @@ export default function DataDump() {
           </div>
         )}
 
-        <p className="mt-6 text-xs text-slate-400">Preview only — simulated, no backend yet.</p>
+        <p className="mono mt-6 text-xs text-muted">Preview only — simulated, no backend yet.</p>
       </Card>
     </>
   );

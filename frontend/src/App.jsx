@@ -14,18 +14,18 @@ const MOBILE_NAV = [
 
 export default function App() {
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-800">
+    <div className="flex min-h-screen bg-canvas text-ink">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 md:hidden">
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-line bg-ink px-3 py-2 md:hidden">
           {MOBILE_NAV.map(([to, label]) => (
             <NavLink
               key={to}
               to={to}
               end={to === "/"}
               className={({ isActive }) =>
-                `whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium ${
-                  isActive ? "bg-slate-900 text-white" : "text-slate-600"
+                `whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold ${
+                  isActive ? "bg-brand text-white" : "text-[#87928b]"
                 }`
               }
             >
@@ -34,7 +34,7 @@ export default function App() {
           ))}
         </div>
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-8 md:px-8">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-10 md:px-10">
           <Routes>
             <Route path="/" element={<ExploreProcess />} />
             <Route path="/models" element={<ModelConfig />} />

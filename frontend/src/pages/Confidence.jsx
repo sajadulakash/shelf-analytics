@@ -27,6 +27,7 @@ export default function Confidence() {
   return (
     <>
       <PageHeader
+        kicker="Log"
         title="Confidence"
         subtitle={
           data.threshold
@@ -35,11 +36,7 @@ export default function Confidence() {
         }
         actions={
           <>
-            <Select
-              value={limit}
-              onChange={(e) => setLimit(Number(e.target.value))}
-              className="w-28"
-            >
+            <Select value={limit} onChange={(e) => setLimit(Number(e.target.value))} className="w-28">
               {[50, 100, 250, 500].map((n) => (
                 <option key={n} value={n}>
                   {n} rows
@@ -54,9 +51,7 @@ export default function Confidence() {
       />
 
       {error && (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
+        <div className="mb-4 rounded-md border border-[#efc7c3] bg-dangersoft px-4 py-3 text-sm text-danger">{error}</div>
       )}
 
       <Card className="overflow-hidden">
@@ -68,28 +63,26 @@ export default function Confidence() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3 font-semibold">File</th>
-                  <th className="px-4 py-3 font-semibold">Prediction</th>
-                  <th className="px-4 py-3 font-semibold">Confidence</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">Reason</th>
+                <tr className="border-b border-line bg-[#f8faf8] text-left text-[0.62rem] font-bold uppercase tracking-wide text-muted">
+                  <th className="px-4 py-3">File</th>
+                  <th className="px-4 py-3">Prediction</th>
+                  <th className="px-4 py-3">Confidence</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Reason</th>
                 </tr>
               </thead>
               <tbody>
                 {data.records.map((r, i) => (
-                  <tr key={i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
-                    <td className="max-w-[220px] truncate px-4 py-3 text-slate-600" title={r.filename}>
+                  <tr key={i} className="border-b border-line last:border-0 hover:bg-[#f8faf8]">
+                    <td className="mono max-w-[220px] truncate px-4 py-3 text-muted" title={r.filename}>
                       {r.filename}
                     </td>
-                    <td className="px-4 py-3 font-medium text-slate-800">{r.predicted_label}</td>
-                    <td className="px-4 py-3 font-semibold tabular-nums text-slate-700">
-                      {(Number(r.confidence || 0) * 100).toFixed(2)}%
-                    </td>
+                    <td className="px-4 py-3 font-semibold text-ink">{r.predicted_label}</td>
+                    <td className="mono px-4 py-3 font-semibold text-ink">{(Number(r.confidence || 0) * 100).toFixed(2)}%</td>
                     <td className="px-4 py-3">
                       {r.is_unknown ? <Badge tone="red">Unknown</Badge> : <Badge tone="green">Known</Badge>}
                     </td>
-                    <td className="max-w-[280px] truncate px-4 py-3 text-slate-500" title={r.reason || ""}>
+                    <td className="max-w-[280px] truncate px-4 py-3 text-muted" title={r.reason || ""}>
                       {r.reason || "—"}
                     </td>
                   </tr>
