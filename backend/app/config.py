@@ -35,8 +35,19 @@ MANAGED_LABELS_FILE = DATA_DIR / "managed_labels.json"
 SHOP_IMAGES_DIR = Path(os.environ.get("SHOP_IMAGES_DIR", BASE_DIR / "shop-images"))
 SHOP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-YOLO_MODEL_PATH = BASE_DIR / "models" / "best.pt"
-SWINV2_MODEL_DIR = BASE_DIR / "models" / "swinv2_model"
+# Model registry. Detection weights live in models/yolo/*.pt, classification
+# models in models/swinv2/<name>/ (each a HF model dir with config.json).
+MODELS_DIR = BASE_DIR / "models"
+YOLO_DIR = MODELS_DIR / "yolo"
+SWINV2_DIR = MODELS_DIR / "swinv2"
+
+# Active model + label selection, chosen on the Model Configuration page and
+# remembered here until reconfigured.
+MODEL_CONFIG_FILE = DATA_DIR / "model_config.json"
+
+# Legacy defaults / fallback paths.
+YOLO_MODEL_PATH = YOLO_DIR / "best.pt"
+SWINV2_MODEL_DIR = SWINV2_DIR / "swinv2_model"
 
 # ---------- Detection: SAHI sliced inference ----------
 # The detector runs SAHI (Slicing Aided Hyper Inference) by default, which

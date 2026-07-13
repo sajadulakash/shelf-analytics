@@ -42,5 +42,24 @@ export async function getConfidence(limit = 100) {
   return asJson(res, "Failed to load confidence records.");
 }
 
+export async function getModelConfig() {
+  const res = await fetch(url("/api/model-config"));
+  return asJson(res, "Failed to load model configuration.");
+}
+
+export async function getModelLabels(classifier) {
+  const res = await fetch(url("/api/model-labels?classifier=" + encodeURIComponent(classifier)));
+  return asJson(res, "Failed to load labels.");
+}
+
+export async function saveModelConfig(cfg) {
+  const res = await fetch(url("/api/model-config"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  });
+  return asJson(res, "Failed to save configuration.");
+}
+
 export const imgSrc = (b64, fallbackUrl) =>
   b64 ? `data:image/jpeg;base64,${b64}` : fallbackUrl ? url(fallbackUrl) : "";

@@ -10,39 +10,38 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-from app import config
+from app import config, model_config
 from app.models import ClassificationRecord, ImageClassificationResult
 
 logger = logging.getLogger(__name__)
 
-_PROCESSOR: AutoImageProcessor | None = None
-_MODEL: AutoModelForImageClassification | None = None
-_LABELS: list[str] | None = None
+# Loaded classifiers cached by model directory, so switching models in the
+# Model Configuration page loads the newly-selected one on next use.
+_CLASSIFIERS: dict[str, tuple] = {}
 UNKNOWN_REPORT_LABEL = "Unknown"
 
 
-def _load_classifier() -> tuple[AutoImageProcessor, AutoModelForImageClassification, list[str]]:
-    global _PROCESSOR, _MODEL, _LABELS
+def _load_classifier(model_dir: Path) -> tuple[AutoImageProcessor, AutoModelForImageClassification, list[str]]:
+    key = str(model_dir)
+    if key in _CLASSIFIERS:
+        return _CLASSIFIERS[key]
 
-    if _PROCESSOR is not None and _MODEL is not None and _LABELS is not None:
-        return _PROCESSOR, _MODEL, _LABELS
-
-    model_dir = config.SWINV2_MODEL_DIR
     if not model_dir.exists():
         raise FileNotFoundError(f"SwinV2 model directory not found: {model_dir}")
 
-    _PROCESSOR = AutoImageProcessor.from_pretrained(str(model_dir), local_files_only=True)
-    _MODEL = AutoModelForImageClassification.from_pretrained(str(model_dir), local_files_only=True)
-    _MODEL.eval()
+    processor = AutoImageProcessor.from_pretrained(key, local_files_only=True)
+    model = AutoModelForImageClassification.from_pretrained(key, local_files_only=True)
+    model.eval()
 
-    id2label = getattr(_MODEL.config, "id2label", {}) or {}
+    id2label = getattr(model.config, "id2label", {}) or {}
     if id2label:
         ordered = sorted((int(k), v) for k, v in id2label.items())
-        _LABELS = [label for _, label in ordered]
+        labels = [label for _, label in ordered]
     else:
-        _LABELS = [f"label_{idx}" for idx in range(_MODEL.config.num_labels)]
+        labels = [f"label_{idx}" for idx in range(model.config.num_labels)]
 
-    return _PROCESSOR, _MODEL, _LABELS
+    _CLASSIFIERS[key] = (processor, model, labels)
+    return _CLASSIFIERS[key]
 
 
 def _save_image(image_bytes: bytes, original_filename: str) -> Path:
@@ -59,21 +58,17 @@ def _save_record(record: ClassificationRecord) -> None:
 
 
 def available_labels() -> list[str]:
-    """Return class labels configured in the local SwinV2 model."""
-    config_path = config.SWINV2_MODEL_DIR / "config.json"
-    if config_path.exists():
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-        id2label = payload.get("id2label", {})
-        if isinstance(id2label, dict) and id2label:
-            ordered = sorted((int(k), str(v)) for k, v in id2label.items())
-            return [label for _, label in ordered]
+    """Return class labels configured in the active SwinV2 model."""
+    labels = model_config.labels_for(model_config.load()["classification_model"])
+    if labels:
+        return labels
 
-    _, _, labels = _load_classifier()
-    return list(labels)
+    _, _, loaded = _load_classifier(model_config.active_classification_dir())
+    return list(loaded)
 
 
 def _predict(image_bytes: bytes) -> tuple[str, float]:
-    processor, model, labels = _load_classifier()
+    processor, model, labels = _load_classifier(model_config.active_classification_dir())
 
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     inputs = processor(images=image, return_tensors="pt")

@@ -128,3 +128,10 @@ class LabelSettingsResponse(BaseModel):
 
 class LabelSettingsUpdate(BaseModel):
     labels: list[str]
+
+
+class ModelConfigUpdate(BaseModel):
+    detection_model: str | None = None
+    classification_model: str | None = None
+    use_sahi: bool | None = None
+    known_labels: list[str] = Field(default_factory=list)

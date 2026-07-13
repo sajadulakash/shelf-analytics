@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -17,7 +18,7 @@ import numpy as np
 from PIL import Image
 from ultralytics import YOLO
 
-from app import config
+from app import config, model_config
 
 
 @dataclass
@@ -38,34 +39,36 @@ class _RawBox:
     class_name: str
 
 
-_MODEL: YOLO | None = None
-_SAHI_MODEL: Any = None
+# Loaded models are cached by weights path so switching models in the Model
+# Configuration page loads the newly-selected one on next use.
+_YOLO_CACHE: dict[str, YOLO] = {}
+_SAHI_CACHE: dict[str, Any] = {}
 
 
-def _get_model() -> YOLO:
-    global _MODEL
-    if _MODEL is None:
-        if not config.YOLO_MODEL_PATH.exists():
-            raise FileNotFoundError(f"YOLO model not found: {config.YOLO_MODEL_PATH}")
-        _MODEL = YOLO(str(config.YOLO_MODEL_PATH))
-    return _MODEL
+def _get_model(model_path: Path) -> YOLO:
+    key = str(model_path)
+    if key not in _YOLO_CACHE:
+        if not model_path.exists():
+            raise FileNotFoundError(f"YOLO model not found: {model_path}")
+        _YOLO_CACHE[key] = YOLO(key)
+    return _YOLO_CACHE[key]
 
 
-def _get_sahi_model():
-    global _SAHI_MODEL
-    if _SAHI_MODEL is None:
-        if not config.SAHI_MODEL_PATH.exists():
-            raise FileNotFoundError(f"SAHI model weights not found: {config.SAHI_MODEL_PATH}")
+def _get_sahi_model(model_path: Path):
+    key = str(model_path)
+    if key not in _SAHI_CACHE:
+        if not model_path.exists():
+            raise FileNotFoundError(f"SAHI model weights not found: {model_path}")
         # Imported lazily so the plain-YOLO path works without sahi installed.
         from sahi import AutoDetectionModel
 
-        _SAHI_MODEL = AutoDetectionModel.from_pretrained(
+        _SAHI_CACHE[key] = AutoDetectionModel.from_pretrained(
             model_type=config.SAHI_MODEL_TYPE,
-            model_path=str(config.SAHI_MODEL_PATH),
+            model_path=key,
             confidence_threshold=config.SAHI_CONFIDENCE_THRESHOLD,
             device=config.SAHI_DEVICE,
         )
-    return _SAHI_MODEL
+    return _SAHI_CACHE[key]
 
 
 def _encode_jpg(image: np.ndarray) -> bytes:
@@ -75,9 +78,9 @@ def _encode_jpg(image: np.ndarray) -> bytes:
     return encoded.tobytes()
 
 
-def _detect_with_yolo(image_bgr: np.ndarray, conf_threshold: float, iou_threshold: float) -> list[_RawBox]:
+def _detect_with_yolo(image_bgr: np.ndarray, model_path: Path, conf_threshold: float, iou_threshold: float) -> list[_RawBox]:
     """Single full-frame YOLO pass (fallback path)."""
-    model = _get_model()
+    model = _get_model(model_path)
     result = model.predict(image_bgr, conf=conf_threshold, iou=iou_threshold, verbose=False)[0]
     names = result.names or {}
 
@@ -93,11 +96,11 @@ def _detect_with_yolo(image_bgr: np.ndarray, conf_threshold: float, iou_threshol
     return boxes
 
 
-def _detect_with_sahi(image_bytes: bytes) -> list[_RawBox]:
+def _detect_with_sahi(image_bytes: bytes, model_path: Path) -> list[_RawBox]:
     """SAHI sliced inference (default path)."""
     from sahi.predict import get_sliced_prediction
 
-    model = _get_sahi_model()
+    model = _get_sahi_model(model_path)
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
     result = get_sliced_prediction(
@@ -137,10 +140,11 @@ def detect_and_crop_products(
     if image_bgr is None:
         raise ValueError("Invalid image format.")
 
-    if config.USE_SAHI:
-        raw_boxes = _detect_with_sahi(image_bytes)
+    det_path = model_config.active_detection_path()
+    if model_config.active_use_sahi():
+        raw_boxes = _detect_with_sahi(image_bytes, det_path)
     else:
-        raw_boxes = _detect_with_yolo(image_bgr, conf_threshold, iou_threshold)
+        raw_boxes = _detect_with_yolo(image_bgr, det_path, conf_threshold, iou_threshold)
 
     height, width = image_bgr.shape[:2]
     crops: list[DetectionCrop] = []

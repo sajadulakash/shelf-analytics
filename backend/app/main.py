@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app import config
+from app import config, model_config
 from app.models import (
     ClassificationResponse,
     DetectionBox,
@@ -26,6 +26,7 @@ from app.models import (
     ShopTaskReportResponse,
     LabelSettingsResponse,
     LabelSettingsUpdate,
+    ModelConfigUpdate,
 )
 from app.classifier import UNKNOWN_REPORT_LABEL, available_labels, classify_single
 from app.detection_service import detect_and_crop_products
@@ -130,10 +131,8 @@ def _save_managed_labels(labels: list[str]) -> list[str]:
 
 
 def _current_labels() -> list[str]:
-    managed = _load_managed_labels()
-    if managed:
-        return managed
-    return available_labels()
+    """Labels treated as known — chosen on the Model Configuration page."""
+    return model_config.active_known_labels() or available_labels()
 
 
 @app.get("/api/labels", response_model=LabelSettingsResponse)
@@ -145,6 +144,41 @@ async def get_label_settings():
 async def update_label_settings(payload: LabelSettingsUpdate):
     labels = _save_managed_labels(payload.labels)
     return LabelSettingsResponse(labels=labels, default_labels=available_labels())
+
+
+# ---------- Model configuration ----------
+def _model_config_payload() -> dict:
+    cfg = model_config.load()
+    return {
+        "detection_models": model_config.list_detection_models(),
+        "classification_models": model_config.list_classification_models(),
+        "detection_model": cfg["detection_model"],
+        "classification_model": cfg["classification_model"],
+        "use_sahi": cfg["use_sahi"],
+        "labels": model_config.selectable_labels(cfg["classification_model"]),
+        "known_labels": cfg["known_labels"],
+    }
+
+
+@app.get("/api/model-config")
+async def get_model_config():
+    return _model_config_payload()
+
+
+@app.get("/api/model-labels")
+async def get_model_labels(classifier: str):
+    if classifier not in model_config.list_classification_models():
+        raise HTTPException(status_code=404, detail=f"Unknown classifier: {classifier}")
+    return {"labels": model_config.selectable_labels(classifier)}
+
+
+@app.post("/api/model-config")
+async def save_model_config(payload: ModelConfigUpdate):
+    try:
+        model_config.save(payload.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _model_config_payload()
 
 
 def _resolve_candidate_labels(labels: str | None) -> list[str]:
