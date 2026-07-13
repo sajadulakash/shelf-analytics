@@ -1,6 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, PageHeader, Button, Badge, Spinner, Stat, EmptyHint } from "../components/primitives";
-import { detectShelf, classifyCrops, imgSrc } from "../api";
+import { detectShelf, classifyCrops, getModelConfig, imgSrc } from "../api";
 
 const PIPELINE = [
   { key: "detecting", label: "Detect" },
@@ -15,9 +15,19 @@ export default function ExploreProcess() {
   const [detection, setDetection] = useState(null);
   const [cls, setCls] = useState(null);
   const [drag, setDrag] = useState(false);
+  const [cfg, setCfg] = useState(null);
   const inputRef = useRef(null);
 
   const busy = stage === "detecting" || stage === "classifying";
+
+  // Reflect the active Model Configuration (models + SAHI mode).
+  useEffect(() => {
+    getModelConfig().then(setCfg).catch(() => {});
+  }, []);
+
+  const configLabel = cfg
+    ? `${cfg.detection_model}${cfg.use_sahi ? " + SAHI" : ""} · ${cfg.classification_model}`
+    : "…";
 
   function pickFile(f) {
     if (!f || !f.type.startsWith("image/")) return;
@@ -106,7 +116,7 @@ export default function ExploreProcess() {
             {busy && <Spinner />}
             {busy ? "Running…" : "Run pipeline"}
           </Button>
-          <span className="mono text-xs text-muted">YOLO + SAHI · SwinV2</span>
+          <span className="mono text-xs text-muted">{configLabel}</span>
         </div>
 
         {(busy || stage === "done") && (
