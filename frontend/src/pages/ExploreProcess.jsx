@@ -1,5 +1,4 @@
 import { useState, useRef } from "react";
-import { jsPDF } from "jspdf";
 import { Card, PageHeader, Button, Badge, Spinner, Stat, EmptyHint } from "../components/primitives";
 import { detectShelf, classifyCrops, imgSrc } from "../api";
 
@@ -57,39 +56,6 @@ export default function ExploreProcess() {
     if (idx < cur) return "done";
     if (idx === cur) return "active";
     return "pending";
-  }
-
-  function downloadPdf() {
-    if (!cls) return;
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    const known = cls.total_detections - cls.unknown_count;
-    let y = 18;
-    doc.setFont("helvetica", "bold").setFontSize(18).text("Classification Report", 14, y);
-    y += 10;
-    doc.setFont("helvetica", "normal").setFontSize(11);
-    doc.text(`Detections: ${cls.total_detections}    Known: ${known}    Unknown: ${cls.unknown_count}`, 14, y);
-    y += 10;
-    doc.setFont("helvetica", "bold").text("Detected label counts", 14, y);
-    y += 7;
-    doc.setFont("helvetica", "normal");
-    const entries = Object.entries(cls.label_counts || {});
-    (entries.length ? entries.map(([k, v]) => `${k}: ${v}`) : ["No known labels detected"]).forEach((line) => {
-      doc.text(line, 16, y);
-      y += 6;
-    });
-    y += 4;
-    doc.setFont("helvetica", "bold").text("Configured labels not found", 14, y);
-    y += 7;
-    doc.setFont("helvetica", "normal");
-    (cls.missing_labels?.length ? cls.missing_labels : ["None"]).forEach((line) => {
-      if (y > 280) {
-        doc.addPage();
-        y = 18;
-      }
-      doc.text(line, 16, y);
-      y += 6;
-    });
-    doc.save("classification_report.pdf");
   }
 
   return (
@@ -182,12 +148,7 @@ export default function ExploreProcess() {
       {/* Report */}
       {cls && (
         <Card className="mt-5 p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-ink">Report</h2>
-            <Button variant="ghost" onClick={downloadPdf}>
-              Download PDF
-            </Button>
-          </div>
+          <h2 className="mb-4 text-xl font-bold text-ink">Report</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Detections" value={cls.total_detections} tone="ink" />
             <Stat label="Known" value={cls.total_detections - cls.unknown_count} tone="brand" />

@@ -1,8 +1,8 @@
 import { NavLink } from "react-router-dom";
 
 const NAV = [
-  { to: "/", label: "Explore Process" },
   { to: "/models", label: "Model Configuration" },
+  { to: "/", label: "Explore Process" },
   { to: "/data-dump", label: "Database Data Dump" },
   { to: "/confidence", label: "Confidence" },
 ];

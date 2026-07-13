@@ -6,8 +6,8 @@ import DataDump from "./pages/DataDump";
 import Confidence from "./pages/Confidence";
 
 const MOBILE_NAV = [
-  ["/", "Process"],
   ["/models", "Models"],
+  ["/", "Process"],
   ["/data-dump", "Data"],
   ["/confidence", "Confidence"],
 ];
