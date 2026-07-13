@@ -1,0 +1,46 @@
+// API layer. In dev, Vite proxies these paths to the FastAPI backend (:8000),
+// so we call them same-origin with an empty base. Override with VITE_API_BASE
+// (e.g. "http://192.168.68.64:8000") when serving the built app separately.
+const BASE = import.meta.env.VITE_API_BASE ?? "";
+
+const url = (path) => BASE + path;
+
+async function asJson(res, fallback) {
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    // ignore
+  }
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || fallback);
+  }
+  return data;
+}
+
+export async function getLabels() {
+  const res = await fetch(url("/api/labels"));
+  return asJson(res, "Failed to load labels.");
+}
+
+export async function detectShelf(file) {
+  const body = new FormData();
+  body.append("image", file);
+  const res = await fetch(url("/detect-shelf"), { method: "POST", body });
+  return asJson(res, "Detection failed.");
+}
+
+export async function classifyCrops(runId) {
+  const body = new FormData();
+  body.append("run_id", runId);
+  const res = await fetch(url("/classify-detected-crops"), { method: "POST", body });
+  return asJson(res, "Classification failed.");
+}
+
+export async function getConfidence(limit = 100) {
+  const res = await fetch(url(`/api/confidence?limit=${limit}`));
+  return asJson(res, "Failed to load confidence records.");
+}
+
+export const imgSrc = (b64, fallbackUrl) =>
+  b64 ? `data:image/jpeg;base64,${b64}` : fallbackUrl ? url(fallbackUrl) : "";
