@@ -155,45 +155,6 @@ export default function ExploreProcess() {
         )}
       </Card>
 
-      {/* Report */}
-      {cls && (
-        <Card className="mt-5 p-6">
-          <h2 className="mb-4 text-xl font-bold text-ink">Report</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Detections" value={cls.total_detections} tone="ink" />
-            <Stat label="Known" value={cls.total_detections - cls.unknown_count} tone="brand" />
-            <Stat label="Unknown" value={cls.unknown_count} tone="danger" />
-            <Stat label="Labels" value={(cls.existing_labels || []).length} tone="amber" />
-          </div>
-
-          <div className="mt-5">
-            <div className="kicker mb-2 text-[0.6rem]">Detected label counts</div>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(cls.label_counts || {}).length ? (
-                Object.entries(cls.label_counts).map(([k, v]) => (
-                  <Badge key={k} tone={/^unknown/i.test(k) ? "amber" : "green"}>
-                    {k}: {v}
-                  </Badge>
-                ))
-              ) : (
-                <span className="text-sm text-muted">No known labels detected</span>
-              )}
-            </div>
-          </div>
-
-          {cls.missing_labels?.length > 0 && (
-            <div className="mt-5">
-              <div className="kicker mb-2 text-[0.6rem]">Configured labels not found</div>
-              <div className="flex flex-wrap gap-2">
-                {cls.missing_labels.map((l) => (
-                  <Badge key={l}>{l}</Badge>
-                ))}
-              </div>
-            </div>
-          )}
-        </Card>
-      )}
-
       {/* Detection image */}
       {detection && (
         <Card className="mt-5 p-6">
@@ -232,6 +193,45 @@ export default function ExploreProcess() {
             </div>
           ) : (
             <EmptyHint>No crops were classified.</EmptyHint>
+          )}
+        </Card>
+      )}
+
+      {/* Report */}
+      {cls && (
+        <Card className="mt-5 p-6">
+          <h2 className="mb-4 text-xl font-bold text-ink">Report</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Detections" value={cls.total_detections} tone="ink" />
+            <Stat label="Known" value={cls.total_detections - cls.unknown_count} tone="brand" />
+            <Stat label="Unknown" value={cls.unknown_count} tone="danger" />
+            <Stat label="Labels" value={(cls.existing_labels || []).length} tone="amber" />
+          </div>
+
+          <div className="mt-5">
+            <div className="kicker mb-2 text-[0.6rem]">Detected label counts</div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(cls.label_counts || {}).length ? (
+                Object.entries(cls.label_counts).map(([k, v]) => (
+                  <Badge key={k} tone={/^unknown/i.test(k) ? "amber" : "green"}>
+                    {k}: {v}
+                  </Badge>
+                ))
+              ) : (
+                <span className="text-sm text-muted">No known labels detected</span>
+              )}
+            </div>
+          </div>
+
+          {cls.missing_labels?.length > 0 && (
+            <div className="mt-5">
+              <div className="kicker mb-2 text-[0.6rem]">Configured labels not found</div>
+              <div className="flex flex-wrap gap-2">
+                {cls.missing_labels.map((l) => (
+                  <Badge key={l}>{l}</Badge>
+                ))}
+              </div>
+            </div>
           )}
         </Card>
       )}
