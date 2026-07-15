@@ -16,6 +16,7 @@ export default function ExploreProcess() {
   const [cls, setCls] = useState(null);
   const [drag, setDrag] = useState(false);
   const [cfg, setCfg] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // clicked crop, shown full-size
   const inputRef = useRef(null);
 
   const busy = stage === "detecting" || stage === "classifying";
@@ -24,6 +25,14 @@ export default function ExploreProcess() {
   useEffect(() => {
     getModelConfig().then(setCfg).catch(() => {});
   }, []);
+
+  // Close the crop preview on Escape.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e) => e.key === "Escape" && setLightbox(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
 
   const configLabel = cfg
     ? `${cfg.detection_model}${cfg.use_sahi ? " + SAHI" : ""} · ${cfg.classification_model}`
@@ -178,7 +187,18 @@ export default function ExploreProcess() {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {cls.classifications.map((c) => (
                 <div key={c.crop_filename} className="overflow-hidden rounded-md border border-line bg-paper">
-                  <img src={imgSrc(c.crop_image_b64, c.crop_url)} alt={c.predicted_label} className="h-36 w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setLightbox(c)}
+                    className="group block h-36 w-full overflow-hidden"
+                    title="Click to view full crop"
+                  >
+                    <img
+                      src={imgSrc(c.crop_image_b64, c.crop_url)}
+                      alt={c.predicted_label}
+                      className="h-36 w-full object-cover transition duration-300 group-hover:scale-110"
+                    />
+                  </button>
                   <div className="space-y-1.5 p-3">
                     <div className="truncate text-sm font-semibold text-ink" title={c.predicted_label}>
                       {c.predicted_label}
@@ -234,6 +254,48 @@ export default function ExploreProcess() {
             </div>
           )}
         </Card>
+      )}
+
+      {/* Full-crop preview */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 p-4 backdrop-blur-sm"
+          onClick={() => setLightbox(null)}
+        >
+          <div
+            className="relative max-h-[90vh] w-auto max-w-3xl overflow-hidden rounded-lg bg-paper shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setLightbox(null)}
+              className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-md bg-ink/60 text-white transition hover:bg-ink"
+              aria-label="Close"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+              </svg>
+            </button>
+            <div className="flex max-h-[78vh] items-center justify-center bg-[#111714] p-2">
+              <img
+                src={imgSrc(lightbox.crop_image_b64, lightbox.crop_url)}
+                alt={lightbox.predicted_label}
+                className="max-h-[74vh] w-auto max-w-full object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-line p-4">
+              <div className="mono truncate text-sm font-semibold text-ink" title={lightbox.predicted_label}>
+                {lightbox.predicted_label}
+              </div>
+              <div className="flex flex-none items-center gap-2">
+                {lightbox.is_unknown ? <Badge tone="red">Unknown</Badge> : <Badge tone="green">Matched</Badge>}
+                <span className="mono text-sm font-semibold text-muted">
+                  {(Number(lightbox.confidence || 0) * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
