@@ -190,3 +190,45 @@ def detect_and_crop_products(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
     annotated_bytes = _encode_jpg(annotated_bgr)
     return annotated_bytes, crops
+
+
+def detect_products(
+    image_bytes: bytes,
+    conf_threshold: float | None = None,
+) -> tuple[int, int, list[tuple[bytes, tuple[int, int, int, int]]]]:
+    """Lean detection for the Data Dump pipeline.
+
+    Honours the active model config (SAHI on/off), skips annotation, and returns
+    ``(width, height, [(crop_jpeg, (x1, y1, x2, y2)), ...])`` in absolute pixels.
+    Nothing is written to disk.
+    """
+    if not image_bytes:
+        raise ValueError("Empty input image.")
+
+    np_buffer = np.frombuffer(image_bytes, dtype=np.uint8)
+    image_bgr = cv2.imdecode(np_buffer, cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise ValueError("Invalid image format.")
+
+    conf = config.DATA_DUMP_DETECTION_CONF if conf_threshold is None else conf_threshold
+    det_path = model_config.active_detection_path()
+    if model_config.active_use_sahi():
+        raw_boxes = _detect_with_sahi(image_bytes, det_path)
+    else:
+        raw_boxes = _detect_with_yolo(image_bgr, det_path, conf, 0.45)
+
+    height, width = image_bgr.shape[:2]
+    crops: list[tuple[bytes, tuple[int, int, int, int]]] = []
+    for raw in raw_boxes:
+        x1 = max(0, min(int(raw.x1), width - 1))
+        y1 = max(0, min(int(raw.y1), height - 1))
+        x2 = max(0, min(int(raw.x2), width))
+        y2 = max(0, min(int(raw.y2), height))
+        if x2 - x1 < 5 or y2 - y1 < 5:
+            continue
+        crop_bgr = image_bgr[y1:y2, x1:x2]
+        if crop_bgr.size == 0:
+            continue
+        crops.append((_encode_jpg(crop_bgr), (x1, y1, x2, y2)))
+
+    return width, height, crops

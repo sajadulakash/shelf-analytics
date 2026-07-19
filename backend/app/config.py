@@ -81,9 +81,38 @@ SAHI_MATCH_THRESHOLD = float(os.environ.get("SAHI_MATCH_THRESHOLD", "0.2"))
 # Max concurrent crop classifications (Vision + Gemini calls)
 CLASSIFICATION_CONCURRENCY = int(os.environ.get("CLASSIFICATION_CONCURRENCY", "3"))
 SWINV2_CONFIDENCE_THRESHOLD = float(os.environ.get("SWINV2_CONFIDENCE_THRESHOLD", "0.99"))
+# Device for the SwinV2 classifier (GPU by default, falls back to CPU only if
+# CUDA is unavailable — checked at load time).
+CLASSIFIER_DEVICE = os.environ.get("CLASSIFIER_DEVICE", "cuda:0")
 UNKNOWN_PRODUCT_LABELS = {
     "unknown",
     "unknown product",
     "unknown-products",
     "unknown_product",
 }
+
+# ---------- Postgres (Database Data Dump) ----------
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+DB_NAME = os.environ.get("DB_NAME", "shelf_analytics_db")
+DB_USER = os.environ.get("DB_USER", "postgres")
+# Password comes from the environment / backend/.env (never hard-coded here).
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+
+# ---------- Data Dump batch pipeline ----------
+# CSV of (image_id, image_url) -> download -> detect -> classify -> Postgres.
+# Downloads run concurrently and feed a bounded queue so slow/dead URLs never
+# stall the GPU; the GPU processes one image at a time (classify in batches).
+DATA_DUMP_DOWNLOAD_CONCURRENCY = int(os.environ.get("DATA_DUMP_DOWNLOAD_CONCURRENCY", "30"))
+DATA_DUMP_QUEUE_MAX = int(os.environ.get("DATA_DUMP_QUEUE_MAX", "32"))
+DATA_DUMP_CLASSIFY_BATCH = int(os.environ.get("DATA_DUMP_CLASSIFY_BATCH", "64"))
+# httpx timeouts: connect is a hard cap; read is per-chunk inactivity, so a
+# slow-but-steady download is never dropped — only a truly stalled one is.
+DATA_DUMP_CONNECT_TIMEOUT = float(os.environ.get("DATA_DUMP_CONNECT_TIMEOUT", "10"))
+DATA_DUMP_READ_TIMEOUT = float(os.environ.get("DATA_DUMP_READ_TIMEOUT", "30"))
+# Retries for transient download failures (timeout / connection / 5xx); a clean
+# 404 or a non-image body is never retried.
+DATA_DUMP_RETRIES = int(os.environ.get("DATA_DUMP_RETRIES", "1"))
+# Cap the failure list kept in a job's status (full count is always tracked).
+DATA_DUMP_MAX_FAILURES_TRACKED = int(os.environ.get("DATA_DUMP_MAX_FAILURES_TRACKED", "200"))
+DATA_DUMP_DETECTION_CONF = float(os.environ.get("DATA_DUMP_DETECTION_CONF", "0.25"))

@@ -61,5 +61,23 @@ export async function saveModelConfig(cfg) {
   return asJson(res, "Failed to save configuration.");
 }
 
+// ---------- Database Data Dump ----------
+export async function startDataDump(file) {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch(url("/api/data-dump"), { method: "POST", body });
+  return asJson(res, "Failed to start data dump.");
+}
+
+export async function getDataDump(jobId) {
+  const res = await fetch(url(`/api/data-dump/${jobId}`));
+  return asJson(res, "Failed to load job status.");
+}
+
+export async function cancelDataDump(jobId) {
+  const res = await fetch(url(`/api/data-dump/${jobId}/cancel`), { method: "POST" });
+  return asJson(res, "Failed to cancel job.");
+}
+
 export const imgSrc = (b64, fallbackUrl) =>
   b64 ? `data:image/jpeg;base64,${b64}` : fallbackUrl ? url(fallbackUrl) : "";

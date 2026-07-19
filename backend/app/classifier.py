@@ -21,6 +21,11 @@ _CLASSIFIERS: dict[str, tuple] = {}
 UNKNOWN_REPORT_LABEL = "Unknown"
 
 
+def _device() -> str:
+    """GPU when available, else CPU (honours CLASSIFIER_DEVICE)."""
+    return config.CLASSIFIER_DEVICE if torch.cuda.is_available() else "cpu"
+
+
 def _load_classifier(model_dir: Path) -> tuple[AutoImageProcessor, AutoModelForImageClassification, list[str]]:
     key = str(model_dir)
     if key in _CLASSIFIERS:
@@ -31,7 +36,7 @@ def _load_classifier(model_dir: Path) -> tuple[AutoImageProcessor, AutoModelForI
 
     processor = AutoImageProcessor.from_pretrained(key, local_files_only=True)
     model = AutoModelForImageClassification.from_pretrained(key, local_files_only=True)
-    model.eval()
+    model.to(_device()).eval()
 
     id2label = getattr(model.config, "id2label", {}) or {}
     if id2label:
@@ -71,7 +76,7 @@ def _predict(image_bytes: bytes) -> tuple[str, float]:
     processor, model, labels = _load_classifier(model_config.active_classification_dir())
 
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    inputs = processor(images=image, return_tensors="pt")
+    inputs = processor(images=image, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
         outputs = model(**inputs)
@@ -95,6 +100,57 @@ def _is_unknown_product_label(label: str) -> bool:
         return True
     unknown_keys = {_label_key(item) for item in config.UNKNOWN_PRODUCT_LABELS}
     return key in unknown_keys
+
+
+def _resolve_label(
+    predicted_label: str,
+    confidence: float,
+    candidate_labels: list[str] | None,
+) -> tuple[str, bool]:
+    """Apply the unknown/threshold/candidate rules → (final_label, is_unknown)."""
+    if _is_unknown_product_label(predicted_label):
+        return UNKNOWN_REPORT_LABEL, True
+    if candidate_labels and predicted_label not in candidate_labels:
+        return UNKNOWN_REPORT_LABEL, True
+    if confidence < config.SWINV2_CONFIDENCE_THRESHOLD:
+        return UNKNOWN_REPORT_LABEL, True
+    return predicted_label, False
+
+
+def classify_batch(
+    crops: list[bytes],
+    candidate_labels: list[str] | None = None,
+    batch_size: int | None = None,
+) -> list[tuple[str, bool]]:
+    """Classify many crops in GPU batches. In-memory only — no disk, no logging.
+
+    Returns one ``(class_name, is_unknown)`` per crop, in input order. Used by the
+    Database Data Dump pipeline where crops are never persisted.
+    """
+    if not crops:
+        return []
+
+    processor, model, labels = _load_classifier(model_config.active_classification_dir())
+    batch_size = batch_size or config.DATA_DUMP_CLASSIFY_BATCH
+
+    results: list[tuple[str, bool]] = []
+    for start in range(0, len(crops), batch_size):
+        chunk = crops[start:start + batch_size]
+        images = [Image.open(io.BytesIO(b)).convert("RGB") for b in chunk]
+        inputs = processor(images=images, return_tensors="pt").to(model.device)
+
+        with torch.no_grad():
+            logits = model(**inputs).logits
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        confs, idxs = torch.max(probs, dim=-1)
+        for i in range(len(chunk)):
+            best_index = int(idxs[i].item())
+            confidence = float(confs[i].item())
+            predicted = labels[best_index] if best_index < len(labels) else UNKNOWN_REPORT_LABEL
+            results.append(_resolve_label(predicted, confidence, candidate_labels))
+
+    return results
 
 
 def classify_single(

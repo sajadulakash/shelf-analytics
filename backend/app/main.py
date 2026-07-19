@@ -30,6 +30,7 @@ from app.models import (
 )
 from app.classifier import UNKNOWN_REPORT_LABEL, available_labels, classify_single
 from app.detection_service import detect_and_crop_products
+from app import data_dump
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -660,6 +661,43 @@ async def classify_detected_crops(
         existing_labels=existing_labels,
         missing_labels=missing_labels,
     )
+
+
+# ---------- Database Data Dump ----------
+@app.post("/api/data-dump")
+async def start_data_dump(file: UploadFile = File(..., description="CSV of image_id, image_url")):
+    """Upload a CSV and start a background detect→classify→Postgres dump job."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded CSV is empty.")
+
+    rows, error = data_dump.parse_csv(raw)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    job = data_dump.start_job(file.filename or "upload.csv", rows)
+    return JSONResponse(status_code=202, content=job.snapshot())
+
+
+@app.get("/api/data-dump")
+async def list_data_dumps():
+    return {"jobs": [job.snapshot() for job in data_dump.list_jobs()]}
+
+
+@app.get("/api/data-dump/{job_id}")
+async def get_data_dump(job_id: str):
+    job = data_dump.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.snapshot()
+
+
+@app.post("/api/data-dump/{job_id}/cancel")
+async def cancel_data_dump(job_id: str):
+    if not data_dump.get_job(job_id):
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    canceled = data_dump.request_cancel(job_id)
+    return {"job_id": job_id, "cancel_requested": canceled}
 
 
 # ---------- Serve uploaded crop/detection images (must be AFTER all route definitions) ----------
