@@ -192,6 +192,32 @@ def detect_and_crop_products(
     return annotated_bytes, crops
 
 
+def annotate_boxes(
+    image_bytes: bytes,
+    boxes: list[tuple[int, int, int, int, str]],
+    color: tuple[int, int, int] = (0, 255, 0),
+) -> bytes:
+    """Draw labeled boxes on an image and return JPEG bytes.
+
+    ``boxes`` is a list of ``(x1, y1, x2, y2, label)`` in absolute pixels. Used to
+    render the "known products only" overlay on the original shelf image.
+    """
+    np_buffer = np.frombuffer(image_bytes, dtype=np.uint8)
+    image_bgr = cv2.imdecode(np_buffer, cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise ValueError("Invalid image format.")
+
+    for x1, y1, x2, y2, label in boxes:
+        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), color, 3)
+        text = str(label)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        cv2.rectangle(image_bgr, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
+        cv2.putText(image_bgr, text, (x1 + 2, y1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
+
+    return _encode_jpg(image_bgr)
+
+
 def detect_products(
     image_bytes: bytes,
     conf_threshold: float | None = None,

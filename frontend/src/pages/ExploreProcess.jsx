@@ -217,6 +217,28 @@ export default function ExploreProcess() {
         </Card>
       )}
 
+      {/* Known products on the full image */}
+      {cls && (
+        <Card className="mt-5 p-6">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xl font-bold text-ink">Known products</h2>
+            <Badge tone="green">{cls.total_detections - cls.unknown_count} known</Badge>
+          </div>
+          <p className="mb-4 text-sm text-muted">
+            The full shelf image with only the known (matched) products boxed — unknown detections are hidden.
+          </p>
+          {cls.known_overlay_b64 ? (
+            <img
+              src={imgSrc(cls.known_overlay_b64)}
+              alt="Known products on the full image"
+              className="w-full rounded-md border border-line"
+            />
+          ) : (
+            <EmptyHint>No known products were detected in this image.</EmptyHint>
+          )}
+        </Card>
+      )}
+
       {/* Report */}
       {cls && (
         <Card className="mt-5 p-6">

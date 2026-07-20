@@ -79,6 +79,7 @@ class ShelfClassificationResponse(BaseModel):
     unknown_count: int
     existing_labels: list[str]
     missing_labels: list[str]
+    known_overlay_b64: str = ""  # original image with only known products boxed
 
 
 class ShopTaskInput(BaseModel):

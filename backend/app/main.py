@@ -29,7 +29,7 @@ from app.models import (
     ModelConfigUpdate,
 )
 from app.classifier import UNKNOWN_REPORT_LABEL, available_labels, classify_single
-from app.detection_service import detect_and_crop_products
+from app.detection_service import detect_and_crop_products, annotate_boxes
 from app import data_dump
 
 logging.basicConfig(level=logging.INFO)
@@ -529,6 +529,7 @@ async def detect_shelf(
         {
             "run_id": run_id,
             "raw_filename": image.filename or raw_name,
+            "raw_path": str(raw_path),
             "candidate_labels": candidate_labels,
             "existing_labels": existing_labels,
             "detection_image_url": _public_upload_url(detection_path),
@@ -606,6 +607,30 @@ async def _classify_one_crop(
             )
 
 
+def _build_known_overlay(raw_path: str | None, results: list[CropClassificationResult]) -> str:
+    """Draw only the known (matched) products on the original image; return b64 JPEG."""
+    if not raw_path:
+        return ""
+    path = Path(raw_path)
+    if not path.exists():
+        return ""
+
+    boxes = [
+        (r.bbox.x1, r.bbox.y1, r.bbox.x2, r.bbox.y2, r.predicted_label)
+        for r in results
+        if not r.is_unknown
+    ]
+    if not boxes:
+        return ""
+
+    try:
+        overlay_bytes = annotate_boxes(path.read_bytes(), boxes)
+    except Exception as e:
+        logger.error("Failed to build known-products overlay: %s", e)
+        return ""
+    return base64.b64encode(overlay_bytes).decode()
+
+
 @app.post("/classify-detected-crops", response_model=ShelfClassificationResponse)
 async def classify_detected_crops(
     run_id: str = Form(..., description="Run ID returned by /detect-shelf"),
@@ -652,6 +677,9 @@ async def classify_detected_crops(
         if not _is_unknown_report_label(label) and label_counter.get(label, 0) == 0
     ])
 
+    # Overlay of the original image showing only the known (matched) products.
+    known_overlay_b64 = _build_known_overlay(manifest.get("raw_path"), classification_results)
+
     return ShelfClassificationResponse(
         run_id=run_id,
         total_detections=len(classification_results),
@@ -660,6 +688,7 @@ async def classify_detected_crops(
         unknown_count=unknown_count,
         existing_labels=existing_labels,
         missing_labels=missing_labels,
+        known_overlay_b64=known_overlay_b64,
     )
 
 
