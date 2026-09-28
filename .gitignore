@@ -19,3 +19,4 @@ yarn-error.log*
 # Local secrets
 .env
 backend/.env
+!backend/.env.example

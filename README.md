@@ -12,65 +12,64 @@ The project runs as two processes: a **FastAPI backend** (API only) and a
 **React + Vite frontend**. The frontend calls the backend through the Vite dev
 proxy, so both sides are same-origin during development.
 
-## Requirements
+## Setup on a new machine
 
-- Python 3.10+ (project uses the `shelf-a` conda env) for the backend.
-- Node.js + npm for the frontend.
-- An **NVIDIA GPU with CUDA** — detection and classification default to `cuda:0`.
-- Model weights under `backend/models/` (`yolo/best.pt` and `swinv2/<model>/`),
-  hosted on Hugging Face and pulled separately (they are git-ignored).
-- PostgreSQL — only for the **Database Data Dump** page.
+Needs Python 3.10+, Node.js, PostgreSQL, and an **NVIDIA GPU with CUDA**
+(detection and classification default to `cuda:0`).
 
-## Quick Start
-
-Run the backend and the frontend in two terminals.
-
-**Terminal 1 — backend (API, port 8000):**
-
-```bash
-conda activate shelf-a
-pip install -r requirements.txt
-cd backend
-python run.py                 # -> http://127.0.0.1:8000  (override with PORT=...)
-```
-
-Hot-reload is **off** by default, because a reload restarts the process and cuts
-off a running data dump. Use `RELOAD=1 python run.py` while editing backend code.
-
-**Setting up a new machine:** `schema.sql` in the project root creates every
-table and index in an empty database:
+**1. Database**
 
 ```bash
 createdb -h localhost -U postgres shelf_analytics_db
 psql -h localhost -U postgres -d shelf_analytics_db -v ON_ERROR_STOP=1 -f schema.sql
 ```
 
-It is safe to re-run. The app also creates what it needs at startup, so this is
-optional — it exists so a server can be prepared before the app first runs.
-
-**Terminal 2 — frontend (UI, port 5173):**
+**2. Secrets** — copy `backend/.env.example` to `backend/.env` and fill it in.
+`SYNC_DB_PASSWORD` is only needed if you want the remote sync.
 
 ```bash
-cd frontend
-npm install                   # once
-npm run dev                   # -> http://localhost:5173
+cp backend/.env.example backend/.env
 ```
 
-> There is **no `npm start`** script. Use `npm run dev` (or `npm run build` /
-> `npm run preview`).
+**3. Model weights** — not in git. Pull them from Hugging Face into:
 
-Then open http://localhost:5173. Interactive API docs are at
-http://127.0.0.1:8000/docs.
+```
+backend/models/yolo/best.pt
+backend/models/swinv2/<model>/     # config.json, model.safetensors, preprocessor_config.json
+```
 
-**Access from another PC on the LAN:** the backend binds `0.0.0.0` and Vite runs
-with `host: true`, so both are reachable from another machine (e.g.
-`http://192.168.68.64:5173`). Make sure the host firewall allows ports `5173`
-and `8000`. If the backend is on a different host than the dev server, point the
-proxy at it:
+**4. Backend** (port 8000). The `+cu121` torch wheels come from PyTorch's index,
+which `requirements.txt` already points at.
 
 ```bash
-VITE_BACKEND=http://192.168.68.64:8000 npm run dev
+pip install -r requirements.txt
+cd backend && python run.py
 ```
+
+**5. Frontend** (port 5173).
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Open http://localhost:5173. API docs at http://127.0.0.1:8000/docs.
+
+**Optional — remote sync** (its own process, see [Syncing](#syncing-to-the-remote-database)):
+
+```bash
+cd backend && python sync_worker.py
+```
+
+## Notes
+
+Hot-reload is off by default, since a reload kills a running data dump — use
+`RELOAD=1 python run.py` while editing. There is no `npm start`; use
+`npm run dev`, `npm run build` or `npm run preview`.
+
+Both sides bind all interfaces, so another PC on the LAN can reach
+`http://<host-ip>:5173` if the firewall allows it. If the backend is on a
+different host, start the frontend with
+`VITE_BACKEND=http://<host-ip>:8000 npm run dev`.
 
 **Production build:**
 
