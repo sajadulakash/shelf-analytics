@@ -525,6 +525,47 @@ def rename_model(config_key: str, model_id: str) -> None:
         conn.close()
 
 
+# ---------- Cross-process sync lock ----------
+# The API (Instant Sync button) and the standalone worker can both decide to
+# sync. Without a lock they would each claim the same unsynced rows and push
+# them twice, since a row is only marked sent after the remote commits. A
+# session-level advisory lock is held for the duration of a cycle and released
+# automatically when the connection closes -- including if the process is killed.
+SYNC_LOCK_KEY = 918273645
+
+
+def try_sync_lock(conn) -> bool:
+    """Take the sync lock, or return False if another process holds it."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (SYNC_LOCK_KEY,))
+        return bool(cur.fetchone()[0])
+
+
+def release_sync_lock(conn) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (SYNC_LOCK_KEY,))
+    except Exception:  # noqa: BLE001 - closing the connection releases it anyway
+        pass
+
+
+def sync_in_progress() -> bool:
+    """True if any process is mid-cycle right now."""
+    conn = connect(autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                "  AND classid = %s AND objid = %s AND granted",
+                (SYNC_LOCK_KEY >> 32, SYNC_LOCK_KEY & 0xFFFFFFFF),
+            )
+            return int(cur.fetchone()[0]) > 0
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        conn.close()
+
+
 # ---------- Sync watermark ----------
 def unsynced_batch(conn, limit: int) -> list[tuple]:
     """Next rows waiting to be sent, in the remote's column order.

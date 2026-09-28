@@ -183,6 +183,13 @@ worker agree even though they are different processes. The worker also refuses
 to run unless `SYNC_DB_PASSWORD` is set in `backend/.env`, which doubles as a
 safety interlock.
 
+**Instant sync** next to the toggle pushes everything pending straight away,
+whether or not the schedule is on. Because the API and the worker are separate
+processes, a cycle holds a Postgres session-level advisory lock for its
+duration — so a manual run and a scheduled one can never claim the same rows and
+push them twice. Whichever asks second is refused (`409`) and simply waits for
+the next tick; the lock is released automatically if a process is killed.
+
 **The remote's column names are misleading.** `market_intelligence_inference`
 has `x1, y1, x2, y2`, but those columns hold **centre-x, centre-y, width and
 height**, normalised 0–1 — the same format as the local columns. Verified

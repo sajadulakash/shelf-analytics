@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Card, PageHeader, Button, Badge, Spinner, Stat, EmptyHint } from "../components/primitives";
 import {
   startDataDump, getDataDump, cancelDataDump, listDataDumps, resumeDataDump,
-  getSyncStatus, setSyncEnabled,
+  getSyncStatus, setSyncEnabled, runSyncNow,
 } from "../api";
 
 // A job in one of these states still has a worker on it, so keep polling.
@@ -38,6 +38,8 @@ export default function DataDump() {
   const [sync, setSync] = useState(null);
   const [syncError, setSyncError] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
+  const [instantBusy, setInstantBusy] = useState(false);
+  const [instantResult, setInstantResult] = useState("");
   const inputRef = useRef(null);
 
   const running = isActive(job);
@@ -80,6 +82,24 @@ export default function DataDump() {
       setError(e.message || "Failed to change the sync setting.");
     } finally {
       setSyncBusy(false);
+    }
+  }
+
+  // Push everything pending right now, regardless of the hourly schedule.
+  async function instantSync() {
+    setInstantBusy(true);
+    setSyncError("");
+    setInstantResult("");
+    try {
+      const res = await runSyncNow();
+      setSync(res);
+      setInstantResult(
+        res.rows_synced ? `Synced ${res.rows_synced.toLocaleString()} rows.` : "Nothing to sync."
+      );
+    } catch (e) {
+      setSyncError(e.message || "Instant sync failed.");
+    } finally {
+      setInstantBusy(false);
     }
   }
 
@@ -328,6 +348,7 @@ export default function DataDump() {
               </p>
             </div>
 
+            <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={toggleSync}
@@ -352,6 +373,22 @@ export default function DataDump() {
               </span>
               {syncBusy ? "Saving…" : sync.enabled ? "Sync on" : "Sync off"}
             </button>
+
+            <Button
+              onClick={instantSync}
+              disabled={instantBusy || sync.running || !sync.configured || !sync.pending}
+              title={
+                !sync.configured
+                  ? "SYNC_DB_PASSWORD is not set in backend/.env"
+                  : !sync.pending
+                    ? "Nothing is waiting to sync"
+                    : "Push everything pending now"
+              }
+            >
+              {instantBusy && <Spinner />}
+              {instantBusy ? "Syncing…" : "Instant sync"}
+            </Button>
+            </div>
           </div>
           )}
 
@@ -364,6 +401,9 @@ export default function DataDump() {
           </div>
           )}
 
+          {instantResult && (
+            <p className="mono mt-3 text-xs text-brand">{instantResult}</p>
+          )}
           {sync && sync.blocked > 0 && (
             <p className="mono mt-3 text-xs text-amber">
               Blocked rows need ids — run <span className="font-bold">prepare-sync</span>

@@ -97,9 +97,16 @@ def ping_remote() -> None:
 
 
 # ---------- One cycle (runs in a worker thread) ----------
+class SyncBusy(RuntimeError):
+    """Another process is already running a cycle."""
+
+
 def _sync_once() -> tuple[int, int]:
     """Push every pending row, in batches. Returns ``(rows_sent, batches)``."""
     local = db.connect()
+    if not db.try_sync_lock(local):
+        local.close()
+        raise SyncBusy("A sync is already running.")
     remote = _connect_remote()
     sql = _INSERT_REMOTE.format(table=config.SYNC_TABLE)
     sent = batches = 0
@@ -122,6 +129,7 @@ def _sync_once() -> tuple[int, int]:
             sent += len(rows)
             batches += 1
     finally:
+        db.release_sync_lock(local)
         local.close()
         remote.close()
     return sent, batches
@@ -132,7 +140,7 @@ async def run_now() -> dict:
     if not configured():
         raise RuntimeError("SYNC_DB_PASSWORD is not set; refusing to sync.")
     if _RUNTIME["running"]:
-        return {"skipped": "already running"}
+        raise SyncBusy("A sync is already running.")
 
     _RUNTIME["running"] = True
     _RUNTIME["last_error"] = None
@@ -142,6 +150,8 @@ async def run_now() -> dict:
         _RUNTIME["total_synced"] += sent
         logger.info("Sync: pushed %d row(s) in %d batch(es)", sent, batches)
         return {"rows_synced": sent, "batches": batches}
+    except SyncBusy:
+        raise
     except Exception as e:  # noqa: BLE001
         _RUNTIME["last_error"] = str(e)
         logger.exception("Sync cycle failed")
@@ -169,6 +179,8 @@ async def loop() -> None:
                 continue
             try:
                 await run_now()
+            except SyncBusy:
+                logger.info("Skipping cycle: another process holds the sync lock.")
             except Exception:  # noqa: BLE001 - already logged; keep the loop alive
                 pass
             _RUNTIME["next_due"] = _now() + timedelta(seconds=config.SYNC_INTERVAL_SECONDS)
@@ -183,7 +195,7 @@ def status() -> dict:
     return {
         "enabled": is_enabled(),
         "configured": configured(),
-        "running": _RUNTIME["running"],
+        "running": _RUNTIME["running"] or db.sync_in_progress(),
         "interval_seconds": config.SYNC_INTERVAL_SECONDS,
         "batch_size": config.SYNC_BATCH_SIZE,
         "destination": f"{config.SYNC_DB_NAME}.{config.SYNC_TABLE} @ {config.SYNC_DB_HOST}",

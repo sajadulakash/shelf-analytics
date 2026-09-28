@@ -68,7 +68,11 @@ async def _once(force: bool) -> int:
             "%s row(s) have no id or model_id and will be left alone "
             "(python -m app.maintenance prepare-sync).", f"{counts['blocked']:,}",
         )
-    result = await sync_service.run_now()
+    try:
+        result = await sync_service.run_now()
+    except sync_service.SyncBusy:
+        logger.info("Another process is already syncing; nothing to do.")
+        return 0
     logger.info("Done: %s", result)
     return 0
 

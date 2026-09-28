@@ -854,9 +854,16 @@ async def registered_models():
 
 @app.post("/api/sync/run-now")
 async def sync_run_now():
-    """Run one cycle immediately instead of waiting for the next tick."""
+    """Push everything pending right now, without waiting for the next cycle.
+
+    Works whether or not the hourly sync is switched on — this is the manual
+    override. It is refused while another process is mid-cycle, so a scheduled
+    run and this one can never claim the same rows.
+    """
     try:
         result = await sync_service.run_now()
+    except sync_service.SyncBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001

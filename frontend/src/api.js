@@ -52,6 +52,11 @@ export async function setSyncEnabled(enabled) {
   return asJson(res, "Failed to change the sync setting.");
 }
 
+export async function runSyncNow() {
+  const res = await fetch(url("/api/sync/run-now"), { method: "POST" });
+  return asJson(res, "Instant sync failed.");
+}
+
 export async function getRuntime(limit = 25) {
   const res = await fetch(url(`/api/runtime?limit=${limit}`));
   return asJson(res, "Failed to load runtime activity.");
