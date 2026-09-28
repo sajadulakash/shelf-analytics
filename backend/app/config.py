@@ -80,7 +80,7 @@ SAHI_MATCH_THRESHOLD = float(os.environ.get("SAHI_MATCH_THRESHOLD", "0.2"))
 
 # Max concurrent crop classifications (Vision + Gemini calls)
 CLASSIFICATION_CONCURRENCY = int(os.environ.get("CLASSIFICATION_CONCURRENCY", "3"))
-SWINV2_CONFIDENCE_THRESHOLD = float(os.environ.get("SWINV2_CONFIDENCE_THRESHOLD", "0.99"))
+SWINV2_CONFIDENCE_THRESHOLD = float(os.environ.get("SWINV2_CONFIDENCE_THRESHOLD", "0.88"))
 # Device for the SwinV2 classifier (GPU by default, falls back to CPU only if
 # CUDA is unavailable — checked at load time).
 CLASSIFIER_DEVICE = os.environ.get("CLASSIFIER_DEVICE", "cuda:0")
