@@ -256,39 +256,6 @@ export default function DataDump() {
                 {job.error}
               </div>
             )}
-
-            {/* Failures */}
-            {job.failures?.length > 0 && (
-              <div className="mt-6">
-                <div className="kicker mb-2 text-[0.6rem]">
-                  Failed images{job.failures_truncated ? ` (showing first ${job.failures.length} of ${job.failed_images})` : ""}
-                </div>
-                <div className="overflow-hidden rounded-lg border border-line">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-[#f3f6f4] text-xs uppercase tracking-wide text-muted">
-                      <tr>
-                        <th className="px-3 py-2 font-semibold">Image ID</th>
-                        <th className="px-3 py-2 font-semibold">URL</th>
-                        <th className="px-3 py-2 font-semibold">Reason</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {job.failures.map((f, i) => (
-                        <tr key={`${f.image_id}-${i}`} className="border-t border-line">
-                          <td className="mono px-3 py-2 text-ink">{f.image_id}</td>
-                          <td className="mono max-w-[22rem] truncate px-3 py-2 text-muted" title={f.image_url}>
-                            {f.image_url}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge tone="red">{f.reason}</Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
         )}
 

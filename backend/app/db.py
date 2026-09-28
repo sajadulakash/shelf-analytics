@@ -256,21 +256,6 @@ def _counts(cur, job_id: str) -> dict:
     }
 
 
-def recent_failures(job_id: str, limit: int) -> list[dict]:
-    """The first ``limit`` failed items of a job, for the status payload."""
-    conn = connect(autocommit=True)
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT image_id, image_url, reason FROM data_dump_items "
-                "WHERE job_id = %s AND status = 'failed' ORDER BY updated_at LIMIT %s",
-                (job_id, limit),
-            )
-            return [dict(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
-
-
 def reconcile_interrupted_jobs() -> list[str]:
     """Flag jobs left mid-flight by a crash/restart and return their ids.
 

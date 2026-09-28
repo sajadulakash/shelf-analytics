@@ -116,8 +116,6 @@ DATA_DUMP_READ_TIMEOUT = float(os.environ.get("DATA_DUMP_READ_TIMEOUT", "30"))
 # Retries for transient download failures (timeout / connection / 5xx); a clean
 # 404 or a non-image body is never retried.
 DATA_DUMP_RETRIES = int(os.environ.get("DATA_DUMP_RETRIES", "1"))
-# Cap the failure list kept in a job's status (full count is always tracked).
-DATA_DUMP_MAX_FAILURES_TRACKED = int(os.environ.get("DATA_DUMP_MAX_FAILURES_TRACKED", "200"))
 DATA_DUMP_DETECTION_CONF = float(os.environ.get("DATA_DUMP_DETECTION_CONF", "0.25"))
 # A job cut off by a restart/crash is reopened on the next startup. With this on
 # (the default) it also picks up again automatically from its first unfinished

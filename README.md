@@ -82,7 +82,7 @@ VITE_API_BASE=http://192.168.68.64:8000 npm run build
 | --- | --- | --- |
 | **Model Configuration** | `/models` | Pick the YOLO weights and SwinV2 classifier, toggle SAHI on/off, and check which labels count as *known*. Saved to `backend/data/model_config.json` and used by every pipeline run. |
 | **Explore Process** | `/` | Upload one shelf image → detect → classify each crop → report. Shows the annotated image, every classified crop (click to enlarge), a known-products-only overlay, and label counts. |
-| **Database Data Dump** | `/data-dump` | Upload a CSV of `image_id, image_url`; the backend downloads each image, runs detect + classify, and writes rows to Postgres. Live progress, counts, cancel, and per-image failures. Runs survive reloads and restarts — see [Durable dump jobs](#durable-dump-jobs). |
+| **Database Data Dump** | `/data-dump` | Upload a CSV of `image_id, image_url`; the backend downloads each image, runs detect + classify, and writes rows to Postgres. Live progress, counts and cancel. Runs survive reloads and restarts — see [Durable dump jobs](#durable-dump-jobs). |
 | **Runtime** | `/runtime` | Live feed of what the pipeline is doing — the last 10/15/25/50/100 images to be **dumped**, **skipped** or **failed**, the active job's progress, and the model setup in use. Refreshes every 2s. |
 
 ## Configuration
@@ -123,8 +123,8 @@ Backend behaviour is controlled by environment variables (see
 **Data Dump tuning:** `DATA_DUMP_DOWNLOAD_CONCURRENCY` (`30`),
 `DATA_DUMP_QUEUE_MAX` (`32`), `DATA_DUMP_CLASSIFY_BATCH` (`64`),
 `DATA_DUMP_CONNECT_TIMEOUT` (`10`), `DATA_DUMP_READ_TIMEOUT` (`30`),
-`DATA_DUMP_RETRIES` (`1`), `DATA_DUMP_MAX_FAILURES_TRACKED` (`200`),
-`DATA_DUMP_DETECTION_CONF` (`0.25`), `DATA_DUMP_AUTO_RESUME` (`1`).
+`DATA_DUMP_RETRIES` (`1`), `DATA_DUMP_DETECTION_CONF` (`0.25`),
+`DATA_DUMP_AUTO_RESUME` (`1`).
 
 ### Skipping images that are already done
 

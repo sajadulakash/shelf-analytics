@@ -108,13 +108,6 @@ def parse_csv(raw: bytes) -> tuple[list[tuple[str, str]], str | None]:
 
 # ---------- Job model ----------
 @dataclass
-class _Failure:
-    image_id: str
-    image_url: str
-    reason: str
-
-
-@dataclass
 class DataDumpJob:
     """Live view of a job. Durable state is in Postgres; this mirrors it in
     memory while the job runs so polling stays cheap."""
@@ -133,11 +126,10 @@ class DataDumpJob:
     created_at: datetime = field(default_factory=_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    failures: list[_Failure] = field(default_factory=list)
     cancel_requested: bool = False
 
     @classmethod
-    def from_db(cls, row: dict, failures: list[dict]) -> "DataDumpJob":
+    def from_db(cls, row: dict) -> "DataDumpJob":
         return cls(
             job_id=row["job_id"],
             source_filename=row["source_filename"],
@@ -153,13 +145,12 @@ class DataDumpJob:
             created_at=row["created_at"],
             started_at=row.get("started_at"),
             finished_at=row.get("finished_at"),
-            failures=[_Failure(f["image_id"], f["image_url"], f["reason"] or "") for f in failures],
         )
 
-    def record_failure(self, image_id: str, image_url: str, reason: str) -> None:
+    def record_failure(self) -> None:
+        """Count a failed image. The per-image reason lives in data_dump_items,
+        which is what resume and the Runtime feed read."""
         self.failed_images += 1
-        if len(self.failures) < config.DATA_DUMP_MAX_FAILURES_TRACKED:
-            self.failures.append(_Failure(image_id, image_url, reason))
 
     @property
     def resumable(self) -> bool:
@@ -183,11 +174,6 @@ class DataDumpJob:
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
-            "failures": [
-                {"image_id": f.image_id, "image_url": f.image_url, "reason": f.reason}
-                for f in self.failures
-            ],
-            "failures_truncated": self.failed_images > len(self.failures),
         }
 
 
@@ -204,15 +190,14 @@ def get_job(job_id: str) -> DataDumpJob | None:
     row = db.load_job(job_id)
     if not row:
         return None
-    failures = db.recent_failures(job_id, config.DATA_DUMP_MAX_FAILURES_TRACKED)
-    return DataDumpJob.from_db(row, failures)
+    return DataDumpJob.from_db(row)
 
 
 def list_jobs(limit: int = 25) -> list[DataDumpJob]:
     jobs: list[DataDumpJob] = []
     for row in db.list_jobs(limit):
         live = _LIVE.get(row["job_id"])
-        jobs.append(live if live else DataDumpJob.from_db(row, []))
+        jobs.append(live if live else DataDumpJob.from_db(row))
     return jobs
 
 
@@ -360,7 +345,8 @@ async def _run(job: DataDumpJob) -> None:
     meta_lock = asyncio.Lock()
 
     async def mark_failed(image_id: str, url: str, reason: str) -> None:
-        job.record_failure(image_id, url, reason)
+        del url  # recorded on the item row by mark_item_failed
+        job.record_failure()
         job.pending_images = max(0, job.pending_images - 1)
         async with meta_lock:
             try:

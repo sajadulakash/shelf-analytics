@@ -43,7 +43,7 @@ VITE_API_BASE=http://192.168.68.64:8000 npm run build
 - **Model Configuration** (`/models`) — model + SAHI mode selectors (simulated).
 - **Database Data Dump** (`/data-dump`) — upload a CSV of `image_id, image_url`;
   the backend downloads each image, runs detect + classify, and dumps rows to
-  Postgres. Shows live progress, counts, and per-image failures. Calls the real
+  Postgres. Shows live progress and counts. Calls the real
   backend (background job + polling).
 - **Confidence** (`/confidence`) — live classification confidence log.
 
