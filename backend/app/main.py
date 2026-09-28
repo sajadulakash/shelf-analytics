@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app import config, db, model_config
+from app import config, db, model_config, sync_service
 from app.models import (
     ClassificationResponse,
     DetectionBox,
@@ -28,6 +28,7 @@ from app.models import (
     LabelSettingsResponse,
     LabelSettingsUpdate,
     ModelConfigUpdate,
+    SyncToggle,
 )
 from app.classifier import UNKNOWN_REPORT_LABEL, available_labels, classify_single
 from app.detection_service import detect_and_crop_products, annotate_boxes
@@ -51,6 +52,10 @@ async def lifespan(app: FastAPI):
             logger.info("Resumed %d interrupted data-dump job(s).", len(resumed))
     except Exception as e:  # noqa: BLE001
         logger.warning("Data-dump startup check skipped (database unavailable): %s", e)
+
+    # The sync is a separate process (backend/sync_worker.py) so it keeps running
+    # whether or not the API is up, and vice versa. The API only reads its status
+    # and flips the shared on/off flag.
     yield
 
 
@@ -807,6 +812,56 @@ async def resume_data_dump(job_id: str):
             detail=f"Job {job_id} has nothing left to process (status: {job.status}).",
         )
     return resumed.snapshot()
+
+
+# ---------- Sync to the remote database ----------
+@app.get("/api/sync")
+async def sync_status():
+    """Toggle state, backlog size and the last cycle's outcome."""
+    try:
+        return await asyncio.to_thread(sync_service.status)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
+
+
+@app.post("/api/sync")
+async def set_sync(payload: SyncToggle):
+    """Turn the hourly sync on or off. The choice is persisted."""
+    if payload.enabled and not sync_service.configured():
+        raise HTTPException(
+            status_code=400,
+            detail="SYNC_DB_PASSWORD is not set in backend/.env, so the sync cannot run.",
+        )
+    await asyncio.to_thread(sync_service.set_enabled, payload.enabled)
+    return await asyncio.to_thread(sync_service.status)
+
+
+@app.get("/api/models")
+async def registered_models():
+    """Every inference setup that has been used, and the model_id it writes."""
+    try:
+        models = await asyncio.to_thread(db.list_models)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
+    return {
+        "active_config_key": model_config.active_config_key(),
+        "models": [
+            {**m, "created_at": m["created_at"].isoformat() if m.get("created_at") else None}
+            for m in models
+        ],
+    }
+
+
+@app.post("/api/sync/run-now")
+async def sync_run_now():
+    """Run one cycle immediately instead of waiting for the next tick."""
+    try:
+        result = await sync_service.run_now()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Sync failed: {e}")
+    return {**result, **await asyncio.to_thread(sync_service.status)}
 
 
 # ---------- Serve uploaded crop/detection images (must be AFTER all route definitions) ----------

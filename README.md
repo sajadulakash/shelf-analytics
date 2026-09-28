@@ -157,6 +157,86 @@ job as a single join, never once per image.
 The ledger row is written in the same transaction as the image's detections, so
 it can never claim an image is done when its rows were rolled back.
 
+### Syncing to the remote database
+
+Detections are written locally first and pushed to the remote `product-sense`
+database in the background. `product_detections.synced_at` is the whole
+protocol: NULL means "not sent yet", so an interrupted cycle costs nothing but a
+repeat of the batch that was in flight.
+
+The sync is a **separate process** from the API, so it keeps working whether or
+not the API is up and regardless of whether any inference is running. It talks
+straight to the database and only ever looks at rows whose `synced_at` is NULL.
+
+```bash
+cd backend
+python sync_worker.py          # run forever, a cycle every SYNC_INTERVAL_SECONDS
+python sync_worker.py --once   # one cycle then exit (for cron)
+python sync_worker.py --force  # ignore the on/off toggle for this run
+```
+
+`sync_worker.py`'s docstring carries a ready-made systemd unit and a cron line.
+
+It is **off by default**. The toggle on the Database Data Dump page writes to
+`app_settings.sync_enabled` in the database — not a file — so the API and the
+worker agree even though they are different processes. The worker also refuses
+to run unless `SYNC_DB_PASSWORD` is set in `backend/.env`, which doubles as a
+safety interlock.
+
+**The remote's column names are misleading.** `market_intelligence_inference`
+has `x1, y1, x2, y2`, but those columns hold **centre-x, centre-y, width and
+height**, normalised 0–1 — the same format as the local columns. Verified
+against all 8.72M live rows: every one but 34,522 is invalid read as a corner
+box, none is invalid read as centre+size, and `min(x1) * 2 == min(x2)` exactly
+(a box touching the edge has centre = width/2). The copy is therefore 1:1 and no
+geometry conversion is applied.
+
+| local `product_detections` | remote `market_intelligence_inference` |
+| --- | --- |
+| `id` | `id` |
+| `image_id` | `image_id` |
+| `class_name` | `class_label` |
+| `x_center` | `x1` |
+| `y_center` | `y1` |
+| `bbox_width` | `x2` |
+| `bbox_height` | `y2` |
+| `model_id` | `model_id` |
+| `synced_at` | *(local only)* |
+
+Rows without an `id` or a `model_id` are never sent — the remote requires
+`model_id`, and the id is what makes a re-send safe. They are reported as
+**blocked** in the sync panel until backfilled.
+
+### Model registry
+
+`model_id` is not a free-text setting: it comes from the `model_registry` table,
+which maps each unique inference setup to exactly one id.
+
+| column | meaning |
+| --- | --- |
+| `config_key` | derived identity of the setup (model file hashes, SAHI mode, thresholds, label selection) |
+| `model_id` | the name written onto every detection row and carried to the remote |
+| `detection_model`, `classification_model`, `use_sahi`, … | what that setup was, for reference |
+
+A setup registers itself the first time it is used. The first one ever
+registered inherits the existing `model-001-yolo26m-v001-swinv2-v001` name so
+history stays continuous; later ones are numbered from it
+(`model-002-…`). Because the key is derived rather than typed, swapping a model
+or changing a threshold produces a new `model_id` automatically instead of
+silently reusing the old one. `GET /api/models` lists them.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SYNC_DB_PASSWORD` | *(empty)* | Required. Without it the sync cannot be enabled. |
+| `SYNC_DB_HOST` | `product-sense-alpha.server.fringecore.sh` | Remote host. |
+| `SYNC_DB_NAME` | `product-sense` | Remote database. |
+| `SYNC_DB_USER` | `mi_user` | Remote user. |
+| `SYNC_TABLE` | `market_intelligence_inference` | Destination table. |
+| `SYNC_INTERVAL_SECONDS` | `3600` | How often a cycle runs. |
+| `SYNC_BATCH_SIZE` | `5000` | Rows per round trip. |
+| `MODEL_ID` | `model-001-yolo26m-v001-swinv2-v001` | Name given to the first setup registered in `model_registry`. |
+| `SYNC_POLL_SECONDS` | `15` | How often the worker notices the toggle changing. |
+
 ### Durable dump jobs
 
 A dump run is not held in memory, so **closing the tab, reloading the browser,
@@ -200,9 +280,16 @@ are run by hand:
 ```bash
 cd backend
 python -m app.maintenance ledger-status      # ledger coverage + active config key
-python -m app.maintenance create-indexes     # product_detections(image_id), CONCURRENTLY
+python -m app.maintenance sync-status        # remote sync backlog
+python -m app.maintenance prepare-sync       # backfill row ids on existing rows
+python -m app.maintenance create-indexes     # product_detections indexes, CONCURRENTLY
 python -m app.maintenance backfill-ledger --config-key <key>
 ```
+
+`prepare-sync` gives every pre-existing row the `id` the sync needs (add
+`--model-id <id>` to fill `model_id` too). It walks the table in page ranges and
+commits each batch, so it can be stopped and restarted and only ever touches
+rows that are still NULL. New rows written by the pipeline already have both.
 
 `create-indexes` builds the `image_id` index that per-image lookups need;
 without it they are a full scan of the whole table. It runs `CONCURRENTLY`, so
@@ -235,6 +322,9 @@ the pipeline skip images that ought to be re-inferred.
 - Skips images already processed under an identical model setup, so re-running a
   CSV only does the work that is actually new.
 - Runtime page showing the last N images dumped, skipped or failed, live.
+- Hourly sync of detections to the remote `product-sense` database, run as its
+  own process, with an on/off toggle and a `synced_at` watermark.
+- Model registry mapping each unique inference setup to one `model_id`.
 - Keeps classification logs for confidence review.
 
 ## API
@@ -255,6 +345,9 @@ Browse `/docs` for the full interactive list. Main routes:
 | `GET` | `/api/data-dump` · `/api/data-dump/{job_id}` | List jobs / poll one job. |
 | `POST` | `/api/data-dump/{job_id}/cancel` | Request cancellation. |
 | `POST` | `/api/data-dump/{job_id}/resume` | Continue an interrupted/canceled job from its first unfinished row. |
+| `GET` | `/api/sync` · `POST` `/api/sync` | Read sync status / turn the sync on or off. |
+| `POST` | `/api/sync/run-now` | Run one sync cycle immediately. |
+| `GET` | `/api/models` | Registered inference setups and their `model_id`s. |
 | `GET` | `/api/runtime?limit=` | Recent per-image pipeline events, active job, and current config key. |
 | `GET` | `/api/confidence?limit=` | Recent classification confidence records (from the Explore Process log). |
 | `GET` | `/health` | Health check. |
@@ -271,7 +364,8 @@ ShelfAnalytics/
 │   │   ├── model_config.py     # model registry + active selection
 │   │   ├── data_dump.py        # CSV -> download -> detect -> classify -> Postgres
 │   │   ├── db.py               # psycopg2 access layer
-│   │   ├── maintenance.py      # one-off index build / ledger backfill
+│   │   ├── maintenance.py      # one-off index build / id + ledger backfill
+│   │   ├── sync_service.py     # sync cycle: local -> remote product-sense DB
 │   │   ├── config.py           # paths + env configuration
 │   │   └── models.py           # pydantic request/response models
 │   ├── models/                 # model files are hosted on Hugging Face
@@ -281,7 +375,8 @@ ShelfAnalytics/
 │   ├── uploads/                # runtime generated files (raw/detections/cropped)
 │   ├── results/                # runtime reports and logs (runs/, classification_log.jsonl)
 │   ├── data/                   # model_config.json (active models + known labels)
-│   ├── .env                    # DB_PASSWORD and other secrets (git-ignored)
+│   ├── .env                    # DB_PASSWORD, SYNC_DB_PASSWORD (git-ignored)
+│   ├── sync_worker.py          # standalone sync process (systemd / cron)
 │   └── run.py
 ├── requirements.txt            # backend Python dependencies
 ├── frontend/                   # React 18 + Vite 6 + Tailwind 4

@@ -135,4 +135,9 @@ class ModelConfigUpdate(BaseModel):
     detection_model: str | None = None
     classification_model: str | None = None
     use_sahi: bool | None = None
+    model_id: str | None = None
     known_labels: list[str] = Field(default_factory=list)
+
+
+class SyncToggle(BaseModel):
+    enabled: bool

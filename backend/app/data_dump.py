@@ -307,12 +307,18 @@ def _process_image(conn, job_id: str, image_id: str, image_bytes: bytes, config_
         labels = classifier.classify_batch(
             crop_bytes, candidate_labels=model_config.active_known_labels()
         )
+        model_id = model_config.active_model_id()
         for (_, (x1, y1, x2, y2)), (class_name, _is_unknown) in zip(crops, labels):
             x_center = ((x1 + x2) / 2) / width
             y_center = ((y1 + y2) / 2) / height
             bbox_width = (x2 - x1) / width
             bbox_height = (y2 - y1) / height
-            rows.append((image_id, class_name, x_center, y_center, bbox_width, bbox_height))
+            rows.append((
+                uuid.uuid4().hex,   # row id, carried to the remote so a re-send is safe
+                image_id, class_name,
+                x_center, y_center, bbox_width, bbox_height,
+                model_id,
+            ))
 
     # Detections, the ledger row and the "this image is done" mark commit
     # together, so a crash can never duplicate rows on resume -- nor leave the

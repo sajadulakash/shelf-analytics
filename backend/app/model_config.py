@@ -19,6 +19,8 @@ from app import config
 _CACHE: dict | None = None
 # Derived identity of the active setup (see active_config_key).
 _KEY_CACHE: str | None = None
+# (config_key, model_id) resolved from the registry.
+_MODEL_ID_CACHE: tuple[str, str] | None = None
 
 
 def _is_unknown_label(label: str) -> bool:
@@ -79,6 +81,7 @@ def _defaults() -> dict:
         "classification_model": cls,
         "use_sahi": config.USE_SAHI,
         "known_labels": selectable_labels(cls) if cls else [],
+        "model_id": config.DEFAULT_MODEL_ID,
     }
 
 
@@ -102,6 +105,8 @@ def load() -> dict:
             cfg["classification_model"] = stored["classification_model"]
         if isinstance(stored.get("use_sahi"), bool):
             cfg["use_sahi"] = stored["use_sahi"]
+        if str(stored.get("model_id", "")).strip():
+            cfg["model_id"] = str(stored["model_id"]).strip()
         valid = set(selectable_labels(cfg["classification_model"]))
         known = [l for l in stored.get("known_labels", []) if l in valid]
         if known:
@@ -112,7 +117,7 @@ def load() -> dict:
 
 
 def save(update: dict) -> dict:
-    global _CACHE, _KEY_CACHE
+    global _CACHE, _KEY_CACHE, _MODEL_ID_CACHE
     current = load()
 
     det = update.get("detection_model") or current["detection_model"]
@@ -134,10 +139,13 @@ def save(update: dict) -> dict:
         "classification_model": cls,
         "use_sahi": use_sahi,
         "known_labels": known,
+        "model_id": str(update.get("model_id") or current["model_id"]).strip()
+        or config.DEFAULT_MODEL_ID,
     }
     config.MODEL_CONFIG_FILE.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
     _CACHE = dict(saved)
     _KEY_CACHE = None
+    _MODEL_ID_CACHE = None
     return dict(saved)
 
 
@@ -156,6 +164,39 @@ def active_use_sahi() -> bool:
 
 def active_known_labels() -> list[str]:
     return load()["known_labels"]
+
+
+def active_model_id() -> str:
+    """The label stamped on every detection row and carried to the remote.
+
+    Resolved from the ``model_registry`` table, which maps each unique inference
+    setup (``config_key``) to one model_id. A setup registers itself the first
+    time it is used, so a model change produces a new model_id automatically
+    rather than silently reusing the old one.
+    """
+    global _MODEL_ID_CACHE
+    key = active_config_key()
+    if _MODEL_ID_CACHE and _MODEL_ID_CACHE[0] == key:
+        return _MODEL_ID_CACHE[1]
+
+    from app import db  # imported here: model_config is used in DB-less contexts too
+
+    cfg = load()
+    details = {
+        "detection_model": cfg["detection_model"],
+        "classification_model": cfg["classification_model"],
+        "use_sahi": bool(cfg["use_sahi"]),
+        "detection_conf": config.DATA_DUMP_DETECTION_CONF,
+        "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,
+        "known_label_count": len(cfg["known_labels"]),
+    }
+    try:
+        model_id = db.register_model(key, details, config.DEFAULT_MODEL_ID)
+    except Exception:  # noqa: BLE001 - never block inference on the registry
+        return cfg.get("model_id") or config.DEFAULT_MODEL_ID
+
+    _MODEL_ID_CACHE = (key, model_id)
+    return model_id
 
 
 # ---------- Identity of the active setup ----------
@@ -245,6 +286,7 @@ def active_config_key() -> str:
         "detection_conf": config.DATA_DUMP_DETECTION_CONF,
         "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,
         "known_labels": sorted(cfg["known_labels"]),
+        "model_id": cfg.get("model_id") or config.DEFAULT_MODEL_ID,
     }
     if cfg["use_sahi"]:
         # Slicing parameters change the detections themselves, so they are part
@@ -276,4 +318,5 @@ def active_config_summary() -> dict:
         "use_sahi": bool(cfg["use_sahi"]),
         "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,
         "known_label_count": len(cfg["known_labels"]),
+        "model_id": active_model_id(),
     }

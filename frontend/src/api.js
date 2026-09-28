@@ -37,6 +37,21 @@ export async function classifyCrops(runId) {
   return asJson(res, "Classification failed.");
 }
 
+// ---------- Remote sync ----------
+export async function getSyncStatus() {
+  const res = await fetch(url("/api/sync"));
+  return asJson(res, "Failed to load sync status.");
+}
+
+export async function setSyncEnabled(enabled) {
+  const res = await fetch(url("/api/sync"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  return asJson(res, "Failed to change the sync setting.");
+}
+
 export async function getRuntime(limit = 25) {
   const res = await fetch(url(`/api/runtime?limit=${limit}`));
   return asJson(res, "Failed to load runtime activity.");

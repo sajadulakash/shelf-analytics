@@ -121,3 +121,36 @@ DATA_DUMP_DETECTION_CONF = float(os.environ.get("DATA_DUMP_DETECTION_CONF", "0.2
 # (the default) it also picks up again automatically from its first unfinished
 # row; set to 0 to leave it paused for a manual Resume instead.
 DATA_DUMP_AUTO_RESUME = _env_flag("DATA_DUMP_AUTO_RESUME", True)
+
+# ---------- Sync to the remote product-sense database ----------
+# Detections are written locally first, then pushed to the remote in the
+# background. `synced_at` on product_detections is the watermark: NULL means the
+# row has not been sent yet.
+#
+# The remote table is `market_intelligence_inference`. Its x1/y1/x2/y2 columns
+# are misnamed -- they hold centre-x, centre-y, width, height, normalised 0-1,
+# exactly like the local columns -- so the mapping is a straight copy. Verified
+# against 8.72M live rows: every one of them is invalid as a corner box, none is
+# invalid as centre+size.
+SYNC_DB_HOST = os.environ.get("SYNC_DB_HOST", "product-sense-alpha.server.fringecore.sh")
+SYNC_DB_PORT = int(os.environ.get("SYNC_DB_PORT", "5432"))
+SYNC_DB_NAME = os.environ.get("SYNC_DB_NAME", "product-sense")
+SYNC_DB_USER = os.environ.get("SYNC_DB_USER", "mi_user")
+# Never hard-coded: without SYNC_DB_PASSWORD in backend/.env the sync cannot run
+# at all, which doubles as a safety interlock.
+SYNC_DB_PASSWORD = os.environ.get("SYNC_DB_PASSWORD", "")
+SYNC_TABLE = os.environ.get("SYNC_TABLE", "market_intelligence_inference")
+
+# How often a sync cycle runs, and how many rows go per round trip.
+SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "3600"))
+SYNC_BATCH_SIZE = int(os.environ.get("SYNC_BATCH_SIZE", "5000"))
+SYNC_CONNECT_TIMEOUT = int(os.environ.get("SYNC_CONNECT_TIMEOUT", "15"))
+# How often the loop wakes to notice the toggle changing (not how often it syncs).
+SYNC_POLL_SECONDS = int(os.environ.get("SYNC_POLL_SECONDS", "15"))
+# The on/off flag lives in the database (app_settings), because the API and the
+# standalone sync worker are separate processes. Ships disabled.
+
+# Human-readable identity of the models that produced a row, written into
+# product_detections.model_id and copied to the remote (where it is NOT NULL).
+# Overridden per setup by "model_id" in data/model_config.json.
+DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "model-001-yolo26m-v001-swinv2-v001")

@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Card, PageHeader, Button, Badge, Spinner, Stat, EmptyHint } from "../components/primitives";
-import { startDataDump, getDataDump, cancelDataDump, listDataDumps, resumeDataDump } from "../api";
+import {
+  startDataDump, getDataDump, cancelDataDump, listDataDumps, resumeDataDump,
+  getSyncStatus, setSyncEnabled,
+} from "../api";
 
 // A job in one of these states still has a worker on it, so keep polling.
 const ACTIVE = ["queued", "running"];
@@ -32,6 +35,9 @@ export default function DataDump() {
   const [starting, setStarting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [error, setError] = useState("");
+  const [sync, setSync] = useState(null);
+  const [syncError, setSyncError] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
   const inputRef = useRef(null);
 
   const running = isActive(job);
@@ -48,16 +54,42 @@ export default function DataDump() {
     }
   }, []);
 
+  // Sync panel: poll slowly, it only shows a backlog and a toggle. A failure is
+  // surfaced rather than swallowed -- an old backend with no /api/sync would
+  // otherwise make the whole panel silently disappear.
+  useEffect(() => {
+    const load = () =>
+      getSyncStatus()
+        .then((s) => {
+          setSync(s);
+          setSyncError("");
+        })
+        .catch((e) => setSyncError(e.message || "Could not reach the sync service."));
+    load();
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function toggleSync() {
+    if (!sync) return;
+    setSyncBusy(true);
+    setError("");
+    try {
+      setSync(await setSyncEnabled(!sync.enabled));
+    } catch (e) {
+      setError(e.message || "Failed to change the sync setting.");
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
   // Re-attach on mount. The backend keeps jobs in Postgres, so a run started
   // before a tab switch, a browser reload or a server restart is still there.
   useEffect(() => {
     (async () => {
       const list = await refreshJobs();
       const attach = list.find(isActive) || list.find((j) => j.resumable);
-      if (attach) {
-        setJob(attach);
-        setFileName(attach.source_filename || "");
-      }
+      if (attach) setJob(attach);
     })();
   }, [refreshJobs]);
 
@@ -189,8 +221,9 @@ export default function DataDump() {
           <div className="mt-8">
             {/* Progress */}
             <div className="mb-2 flex items-baseline justify-between">
-              <span className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
                 {STATUS_LABEL[job.status] || job.status}
+                <span className="mono text-muted">{job.source_filename}</span>
                 <Badge tone={STATUS_TONE[job.status] || "slate"}>{job.status}</Badge>
               </span>
               <span className="mono text-sm font-semibold text-muted">
@@ -270,6 +303,87 @@ export default function DataDump() {
           </p>
         )}
       </Card>
+
+      {/* Remote sync */}
+      {(sync || syncError) && (
+        <Card className="mt-5 p-6">
+          {!sync && (
+            <>
+              <h2 className="text-lg font-bold text-ink">Sync to product-sense</h2>
+              <div className="mt-3 rounded-md border border-[#efc7c3] bg-dangersoft px-4 py-3 text-sm text-danger">
+                {syncError}
+                <div className="mono mt-2 text-xs">
+                  If this says “Not Found”, the backend is running an older build — restart it
+                  (<span className="font-bold">cd backend &amp;&amp; python run.py</span>).
+                </div>
+              </div>
+            </>
+          )}
+          {sync && (
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-ink">Sync to product-sense</h2>
+              <p className="mono mt-1 truncate text-xs text-muted" title={sync.destination}>
+                {sync.destination} · every {Math.round(sync.interval_seconds / 60)}m
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleSync}
+              disabled={syncBusy || (!sync.enabled && !sync.configured)}
+              title={!sync.configured ? "SYNC_DB_PASSWORD is not set in backend/.env" : ""}
+              className={`inline-flex min-h-11 items-center gap-3 rounded-md border px-4 text-[0.8rem] font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                sync.enabled
+                  ? "border-brand bg-brandsoft text-brand"
+                  : "border-line bg-paper text-[#344039] hover:border-[#8e9991]"
+              }`}
+            >
+              <span
+                className={`relative inline-block h-5 w-9 flex-none rounded-full transition ${
+                  sync.enabled ? "bg-brand" : "bg-[#c2ccc5]"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                    sync.enabled ? "left-[1.125rem]" : "left-0.5"
+                  }`}
+                />
+              </span>
+              {syncBusy ? "Saving…" : sync.enabled ? "Sync on" : "Sync off"}
+            </button>
+          </div>
+          )}
+
+          {sync && (
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Waiting to sync" value={sync.pending.toLocaleString()} tone="amber" />
+            <Stat label="Already synced" value={sync.synced.toLocaleString()} tone="brand" />
+            <Stat label="Blocked" value={sync.blocked.toLocaleString()} tone={sync.blocked ? "danger" : "ink"} />
+            <Stat label="Sent last run" value={sync.last_synced.toLocaleString()} tone="ink" />
+          </div>
+          )}
+
+          {sync && sync.blocked > 0 && (
+            <p className="mono mt-3 text-xs text-amber">
+              Blocked rows need ids — run <span className="font-bold">prepare-sync</span>
+            </p>
+          )}
+          {sync && !sync.configured && (
+            <p className="mono mt-3 text-xs text-danger">SYNC_DB_PASSWORD not set in backend/.env</p>
+          )}
+          {sync && sync.last_error && (
+            <p className="mono mt-3 truncate text-xs text-danger" title={sync.last_error}>
+              Last error: {sync.last_error}
+            </p>
+          )}
+          {sync && sync.running && (
+            <p className="mono mt-3 flex items-center gap-2 text-xs text-brand">
+              <Spinner className="h-3 w-3" /> Syncing now…
+            </p>
+          )}
+        </Card>
+      )}
 
       {/* Past runs — a job survives a reload, so it can always be reopened */}
       {jobs.length > 0 && (
