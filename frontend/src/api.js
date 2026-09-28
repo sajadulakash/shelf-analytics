@@ -79,5 +79,16 @@ export async function cancelDataDump(jobId) {
   return asJson(res, "Failed to cancel job.");
 }
 
+// Jobs live in Postgres, so this still lists a run started before a reload.
+export async function listDataDumps(limit = 25) {
+  const res = await fetch(url(`/api/data-dump?limit=${limit}`));
+  return asJson(res, "Failed to load jobs.");
+}
+
+export async function resumeDataDump(jobId) {
+  const res = await fetch(url(`/api/data-dump/${jobId}/resume`), { method: "POST" });
+  return asJson(res, "Failed to resume job.");
+}
+
 export const imgSrc = (b64, fallbackUrl) =>
   b64 ? `data:image/jpeg;base64,${b64}` : fallbackUrl ? url(fallbackUrl) : "";

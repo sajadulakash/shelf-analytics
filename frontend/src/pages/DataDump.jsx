@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Card, PageHeader, Button, Badge, Spinner, Stat, EmptyHint } from "../components/primitives";
-import { startDataDump, getDataDump, cancelDataDump } from "../api";
+import { startDataDump, getDataDump, cancelDataDump, listDataDumps, resumeDataDump } from "../api";
 
-const TERMINAL = ["completed", "failed", "canceled"];
+// A job in one of these states still has a worker on it, so keep polling.
+const ACTIVE = ["queued", "running"];
+const isActive = (job) => !!job && ACTIVE.includes(job.status);
 
 const STATUS_TONE = {
   queued: "amber",
@@ -10,6 +12,7 @@ const STATUS_TONE = {
   completed: "green",
   failed: "red",
   canceled: "slate",
+  interrupted: "amber",
 };
 
 const STATUS_LABEL = {
@@ -18,29 +21,57 @@ const STATUS_LABEL = {
   completed: "Complete",
   failed: "Failed",
   canceled: "Canceled",
+  interrupted: "Interrupted",
 };
 
 export default function DataDump() {
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [job, setJob] = useState(null);
+  const [jobs, setJobs] = useState([]);
   const [starting, setStarting] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef(null);
 
-  const running = job && !TERMINAL.includes(job.status);
+  const running = isActive(job);
   const done = job ? job.processed_images + job.failed_images : 0;
   const pct = job && job.total_images ? Math.round((done / job.total_images) * 100) : 0;
 
-  // Poll the job while it's active. Each setJob re-runs this effect, scheduling
-  // the next poll; a terminal status stops the loop.
+  const refreshJobs = useCallback(async () => {
+    try {
+      const { jobs } = await listDataDumps();
+      setJobs(jobs || []);
+      return jobs || [];
+    } catch {
+      return []; // the list is a convenience; a failure here should not block the page
+    }
+  }, []);
+
+  // Re-attach on mount. The backend keeps jobs in Postgres, so a run started
+  // before a tab switch, a browser reload or a server restart is still there.
   useEffect(() => {
-    if (!job?.job_id || TERMINAL.includes(job.status)) return;
+    (async () => {
+      const list = await refreshJobs();
+      const attach = list.find(isActive) || list.find((j) => j.resumable);
+      if (attach) {
+        setJob(attach);
+        setFileName(attach.source_filename || "");
+      }
+    })();
+  }, [refreshJobs]);
+
+  // Poll while the job is active. Each setJob re-runs this effect, scheduling
+  // the next poll; a job that stops being active ends the loop.
+  useEffect(() => {
+    if (!isActive(job)) return;
     let alive = true;
     const t = setTimeout(async () => {
       try {
         const next = await getDataDump(job.job_id);
-        if (alive) setJob(next);
+        if (!alive) return;
+        setJob(next);
+        if (!isActive(next)) refreshJobs();
       } catch (e) {
         if (alive) setError(e.message || "Lost connection to the job.");
       }
@@ -49,7 +80,7 @@ export default function DataDump() {
       alive = false;
       clearTimeout(t);
     };
-  }, [job]);
+  }, [job, refreshJobs]);
 
   function pickFile(f) {
     if (!f) return;
@@ -67,10 +98,23 @@ export default function DataDump() {
     try {
       const snap = await startDataDump(file);
       setJob(snap);
+      refreshJobs();
     } catch (e) {
       setError(e.message || "Failed to start the dump.");
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function resume(jobId) {
+    setError("");
+    setResuming(true);
+    try {
+      setJob(await resumeDataDump(jobId));
+    } catch (e) {
+      setError(e.message || "Failed to resume.");
+    } finally {
+      setResuming(false);
     }
   }
 
@@ -80,6 +124,15 @@ export default function DataDump() {
       await cancelDataDump(job.job_id);
     } catch (e) {
       setError(e.message || "Failed to cancel.");
+    }
+  }
+
+  async function openJob(jobId) {
+    setError("");
+    try {
+      setJob(await getDataDump(jobId));
+    } catch (e) {
+      setError(e.message || "Failed to load that job.");
     }
   }
 
@@ -124,6 +177,12 @@ export default function DataDump() {
               Cancel
             </Button>
           )}
+          {job?.resumable && !running && (
+            <Button onClick={() => resume(job.job_id)} disabled={resuming}>
+              {resuming && <Spinner />}
+              {resuming ? "Resuming…" : `Resume (${job.pending_images} left)`}
+            </Button>
+          )}
         </div>
 
         {job && (
@@ -143,7 +202,7 @@ export default function DataDump() {
                 className={`h-full rounded-full transition-[width] duration-500 ${
                   job.status === "failed" ? "bg-danger" : "bg-brand"
                 }`}
-                style={{ width: `${TERMINAL.includes(job.status) ? 100 : pct}%` }}
+                style={{ width: `${job.status === "completed" ? 100 : pct}%` }}
               />
             </div>
 
@@ -155,10 +214,20 @@ export default function DataDump() {
               <Stat label="Rows written" value={job.rows_written.toLocaleString()} tone="ink" />
             </div>
 
+            {/* Interrupted — the job outlived the process that was running it */}
+            {job.status === "interrupted" && (
+              <div className="mt-6 rounded-md border border-[#e8d3ab] bg-ambersoft px-4 py-3 text-sm text-amber">
+                <span className="font-semibold">This run was interrupted.</span> The server restarted
+                while it was working. {job.processed_images.toLocaleString()} images are already done
+                and their rows are saved — resuming continues from image{" "}
+                {(job.processed_images + job.failed_images + 1).toLocaleString()}, nothing is redone.
+              </div>
+            )}
+
             {/* Completion banner */}
             {job.status === "completed" && (
               <div className="mt-6 flex items-center gap-3 rounded-md border border-[#bfe3cd] bg-brandsoft px-4 py-3 text-sm font-semibold text-brand">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-brand text-white">
+                <span className="grid h-6 w-6 flex-none place-items-center rounded-full bg-brand text-white">
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                     <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
@@ -226,6 +295,74 @@ export default function DataDump() {
           </p>
         )}
       </Card>
+
+      {/* Past runs — a job survives a reload, so it can always be reopened */}
+      {jobs.length > 0 && (
+        <Card className="mt-5 p-6">
+          <h2 className="mb-4 text-lg font-bold text-ink">Recent runs</h2>
+          <div className="overflow-hidden rounded-lg border border-line">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-[#f3f6f4] text-xs uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">File</th>
+                  <th className="px-3 py-2 font-semibold">Status</th>
+                  <th className="px-3 py-2 font-semibold">Progress</th>
+                  <th className="px-3 py-2 font-semibold">Rows</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((j) => (
+                  <tr
+                    key={j.job_id}
+                    className={`border-t border-line ${j.job_id === job?.job_id ? "bg-brandsoft/40" : ""}`}
+                  >
+                    <td className="mono max-w-[16rem] truncate px-3 py-2 text-ink" title={j.source_filename}>
+                      {j.source_filename}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge tone={STATUS_TONE[j.status] || "slate"}>{STATUS_LABEL[j.status] || j.status}</Badge>
+                    </td>
+                    <td className="mono px-3 py-2 text-muted">
+                      {(j.processed_images + j.failed_images).toLocaleString()}/{j.total_images.toLocaleString()}
+                    </td>
+                    <td className="mono px-3 py-2 text-muted">{j.rows_written.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex justify-end gap-3">
+                        {j.job_id !== job?.job_id && (
+                          <button
+                            type="button"
+                            onClick={() => openJob(j.job_id)}
+                            className="text-sm font-semibold text-brand hover:underline"
+                          >
+                            Open
+                          </button>
+                        )}
+                        {j.resumable && !isActive(job) && (
+                          <button
+                            type="button"
+                            onClick={() => resume(j.job_id)}
+                            disabled={resuming}
+                            className="text-sm font-semibold text-brand hover:underline disabled:opacity-40"
+                          >
+                            Resume
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {jobs.length === 0 && !job && (
+        <Card className="mt-5 p-6">
+          <EmptyHint>No dump runs yet.</EmptyHint>
+        </Card>
+      )}
     </>
   );
 }

@@ -5,6 +5,7 @@ import base64
 import logging
 import json
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from collections import Counter
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
@@ -12,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app import config, model_config
+from app import config, db, model_config
 from app.models import (
     ClassificationResponse,
     DetectionBox,
@@ -35,9 +36,28 @@ from app import data_dump
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Bring the data-dump bookkeeping up to date before serving traffic.
+
+    Creates the dump tables if needed, then reopens any job that a restart or
+    power cut cut off mid-run (and resumes it unless DATA_DUMP_AUTO_RESUME=0).
+    A database that is down is not fatal here — only the data-dump page needs it.
+    """
+    try:
+        await asyncio.to_thread(db.ensure_schema)
+        resumed = await data_dump.reconcile_on_startup()
+        if resumed:
+            logger.info("Resumed %d interrupted data-dump job(s).", len(resumed))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Data-dump startup check skipped (database unavailable): %s", e)
+    yield
+
+
 app = FastAPI(
     title="ShelfAnalytics – Product Classification Service",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -695,7 +715,11 @@ async def classify_detected_crops(
 # ---------- Database Data Dump ----------
 @app.post("/api/data-dump")
 async def start_data_dump(file: UploadFile = File(..., description="CSV of image_id, image_url")):
-    """Upload a CSV and start a background detect→classify→Postgres dump job."""
+    """Upload a CSV and start a background detect→classify→Postgres dump job.
+
+    The CSV rows are persisted before this returns, so the job can be resumed
+    after a reload, a restart or a power cut.
+    """
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded CSV is empty.")
@@ -704,18 +728,23 @@ async def start_data_dump(file: UploadFile = File(..., description="CSV of image
     if error:
         raise HTTPException(status_code=400, detail=error)
 
-    job = data_dump.start_job(file.filename or "upload.csv", rows)
+    try:
+        job = await data_dump.start_job(file.filename or "upload.csv", rows)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Could not queue the job: {e}")
     return JSONResponse(status_code=202, content=job.snapshot())
 
 
 @app.get("/api/data-dump")
-async def list_data_dumps():
-    return {"jobs": [job.snapshot() for job in data_dump.list_jobs()]}
+async def list_data_dumps(limit: int = 25):
+    """Recent jobs, newest first — lets the UI re-attach to a run in progress."""
+    jobs = await asyncio.to_thread(data_dump.list_jobs, max(1, min(limit, 100)))
+    return {"jobs": [job.snapshot() for job in jobs]}
 
 
 @app.get("/api/data-dump/{job_id}")
 async def get_data_dump(job_id: str):
-    job = data_dump.get_job(job_id)
+    job = await asyncio.to_thread(data_dump.get_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     return job.snapshot()
@@ -723,10 +752,25 @@ async def get_data_dump(job_id: str):
 
 @app.post("/api/data-dump/{job_id}/cancel")
 async def cancel_data_dump(job_id: str):
-    if not data_dump.get_job(job_id):
+    if not await asyncio.to_thread(data_dump.get_job, job_id):
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     canceled = data_dump.request_cancel(job_id)
     return {"job_id": job_id, "cancel_requested": canceled}
+
+
+@app.post("/api/data-dump/{job_id}/resume")
+async def resume_data_dump(job_id: str):
+    """Continue an interrupted/canceled job from its first unfinished row."""
+    job = await asyncio.to_thread(data_dump.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    resumed = await data_dump.resume_job(job_id)
+    if not resumed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} has nothing left to process (status: {job.status}).",
+        )
+    return resumed.snapshot()
 
 
 # ---------- Serve uploaded crop/detection images (must be AFTER all route definitions) ----------

@@ -34,6 +34,9 @@ cd backend
 python run.py                 # -> http://127.0.0.1:8000  (override with PORT=...)
 ```
 
+Hot-reload is **off** by default, because a reload restarts the process and cuts
+off a running data dump. Use `RELOAD=1 python run.py` while editing backend code.
+
 **Terminal 2 — frontend (UI, port 5173):**
 
 ```bash
@@ -79,7 +82,7 @@ VITE_API_BASE=http://192.168.68.64:8000 npm run build
 | --- | --- | --- |
 | **Model Configuration** | `/models` | Pick the YOLO weights and SwinV2 classifier, toggle SAHI on/off, and check which labels count as *known*. Saved to `backend/data/model_config.json` and used by every pipeline run. |
 | **Explore Process** | `/` | Upload one shelf image → detect → classify each crop → report. Shows the annotated image, every classified crop (click to enlarge), a known-products-only overlay, and label counts. |
-| **Database Data Dump** | `/data-dump` | Upload a CSV of `image_id, image_url`; the backend downloads each image, runs detect + classify, and writes rows to Postgres. Live progress, counts, cancel, and per-image failures. |
+| **Database Data Dump** | `/data-dump` | Upload a CSV of `image_id, image_url`; the backend downloads each image, runs detect + classify, and writes rows to Postgres. Live progress, counts, cancel, and per-image failures. Runs survive reloads and restarts — see [Durable dump jobs](#durable-dump-jobs). |
 | **Confidence** | `/confidence` | Recent classification confidence log, read from `backend/results/classification_log.jsonl`. |
 
 ## Configuration
@@ -93,6 +96,7 @@ Backend behaviour is controlled by environment variables (see
 | --- | --- | --- |
 | `PORT` | `8000` | Backend API port. |
 | `HOST` | `0.0.0.0` | Backend bind address (LAN-reachable by default). |
+| `RELOAD` | `0` | Uvicorn hot-reload. Leave off outside development — a reload kills running dump jobs. |
 | `SHOP_IMAGES_DIR` | `backend/shop-images` | Root for the batch task-report flow (one folder per shop). |
 | `USE_SAHI` | `1` | Default detection mode. Once saved on the Model Configuration page, `data/model_config.json` wins. |
 | `SAHI_DEVICE` | `cuda:0` | Detection device (GPU). |
@@ -120,10 +124,31 @@ Backend behaviour is controlled by environment variables (see
 `DATA_DUMP_QUEUE_MAX` (`32`), `DATA_DUMP_CLASSIFY_BATCH` (`64`),
 `DATA_DUMP_CONNECT_TIMEOUT` (`10`), `DATA_DUMP_READ_TIMEOUT` (`30`),
 `DATA_DUMP_RETRIES` (`1`), `DATA_DUMP_MAX_FAILURES_TRACKED` (`200`),
-`DATA_DUMP_DETECTION_CONF` (`0.25`).
+`DATA_DUMP_DETECTION_CONF` (`0.25`), `DATA_DUMP_AUTO_RESUME` (`1`).
 
-The dump writes to a `product_detections` table that must already exist —
-bbox values are normalised (0–1) relative to the source image:
+### Durable dump jobs
+
+A dump run is not held in memory, so **closing the tab, reloading the browser,
+restarting the server or losing power does not lose the run**:
+
+- The job and every CSV row are written to Postgres *before* the upload request
+  returns, so the work queue exists on disk from the start.
+- Each image's detections and its "done" mark commit in the **same transaction**,
+  so a crash can never leave rows in the database with the image still pending —
+  which on resume would duplicate every row for that image.
+- On startup, any job still marked `queued`/`running` is reopened as
+  `interrupted` and resumed from its first unfinished row. Set
+  `DATA_DUMP_AUTO_RESUME=0` to leave it paused for a manual **Resume** instead.
+- The Data Dump page re-attaches to a live or interrupted job when it loads, and
+  lists recent runs so any of them can be reopened or resumed.
+
+Worst case you lose the single image that was mid-GPU when the power went — it
+goes back to pending and is redone on resume.
+
+Three tables are used, all created automatically at startup if missing
+(`db.ensure_schema`). `product_detections` holds the output, with bbox values
+normalised (0–1) relative to the source image; `data_dump_jobs` and
+`data_dump_items` hold the resumable job state:
 
 ```sql
 CREATE TABLE product_detections (
@@ -153,7 +178,8 @@ CREATE TABLE product_detections (
 - Per-label *known* selection — anything unchecked is reported as `Unknown`.
 - Known-products-only overlay on the original shelf image.
 - Generates product count reports by shop (batch API over `shop-images/`).
-- Bulk CSV → Postgres dump pipeline with live progress and failure reporting.
+- Bulk CSV → Postgres dump pipeline with live progress and failure reporting,
+  resumable after a reload, a restart or a power cut.
 - Keeps classification logs for confidence review.
 
 ## API
@@ -173,6 +199,7 @@ Browse `/docs` for the full interactive list. Main routes:
 | `POST` | `/api/data-dump` | Start a CSV → Postgres dump job. |
 | `GET` | `/api/data-dump` · `/api/data-dump/{job_id}` | List jobs / poll one job. |
 | `POST` | `/api/data-dump/{job_id}/cancel` | Request cancellation. |
+| `POST` | `/api/data-dump/{job_id}/resume` | Continue an interrupted/canceled job from its first unfinished row. |
 | `GET` | `/api/confidence?limit=` | Recent classification confidence records. |
 | `GET` | `/health` | Health check. |
 

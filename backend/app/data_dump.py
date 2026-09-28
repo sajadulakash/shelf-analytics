@@ -8,6 +8,12 @@ nothing is written to disk.
 The run is a background job: downloads run concurrently and feed a bounded queue,
 while a single GPU consumer processes one image at a time (classifying its crops
 in batches). Callers start a job and poll its status.
+
+**Durability.** The job and every CSV row are written to Postgres before the
+upload request returns, and each image is marked done in the same transaction as
+its detections. So a browser reload, a server restart or a power cut costs at
+most the image that was in flight: on the next start, interrupted jobs are
+reopened and (by default) resumed from the first row that never finished.
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ _SENTINEL = object()
 _ID_KEYS = ("image_id", "id", "imageid", "image")
 _URL_KEYS = ("image_url", "url", "imageurl", "link")
 
+TERMINAL_STATUSES = ("completed", "failed", "canceled", "interrupted")
+
 # Magic-byte signatures — a cheap "is this actually an image?" check that avoids
 # decoding a full 16 MP file just to validate. Corrupt-but-plausible files still
 # get caught later at detection time.
@@ -52,13 +60,9 @@ def _now() -> datetime:
 def _looks_like_image(data: bytes) -> bool:
     if len(data) < 12:
         return False
-    if data[:3] in _IMAGE_MAGIC or data.startswith(_IMAGE_MAGIC):
-        return True
-    if data[:2] == b"BM":
-        return True
     if data[8:12] == b"WEBP":  # RIFF....WEBP
         return True
-    return any(data.startswith(sig) for sig in _IMAGE_MAGIC)
+    return data.startswith(_IMAGE_MAGIC)
 
 
 # ---------- Download error typing ----------
@@ -89,10 +93,13 @@ def parse_csv(raw: bytes) -> tuple[list[tuple[str, str]], str | None]:
         return [], "CSV must have an image_id column and an image_url column."
 
     rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for record in reader:
         image_id = str(record.get(id_col, "") or "").strip()
         image_url = str(record.get(url_col, "") or "").strip()
-        if image_id and image_url:
+        # image_id keys the work queue, so a repeat is the same unit of work.
+        if image_id and image_url and image_id not in seen:
+            seen.add(image_id)
             rows.append((image_id, image_url))
     if not rows:
         return [], "No valid (image_id, image_url) rows found."
@@ -109,14 +116,17 @@ class _Failure:
 
 @dataclass
 class DataDumpJob:
+    """Live view of a job. Durable state is in Postgres; this mirrors it in
+    memory while the job runs so polling stays cheap."""
+
     job_id: str
     source_filename: str
     total_images: int
-    status: str = "queued"  # queued | running | completed | failed | canceled
+    status: str = "queued"  # queued|running|completed|failed|canceled|interrupted
     processed_images: int = 0
     failed_images: int = 0
     rows_written: int = 0
-    detections: int = 0
+    pending_images: int = 0
     error: str | None = None
     created_at: datetime = field(default_factory=_now)
     started_at: datetime | None = None
@@ -124,10 +134,32 @@ class DataDumpJob:
     failures: list[_Failure] = field(default_factory=list)
     cancel_requested: bool = False
 
+    @classmethod
+    def from_db(cls, row: dict, failures: list[dict]) -> "DataDumpJob":
+        return cls(
+            job_id=row["job_id"],
+            source_filename=row["source_filename"],
+            total_images=row["total_images"],
+            status=row["status"],
+            processed_images=row["processed_images"],
+            failed_images=row["failed_images"],
+            rows_written=row["rows_written"],
+            pending_images=row["pending_images"],
+            error=row.get("error"),
+            created_at=row["created_at"],
+            started_at=row.get("started_at"),
+            finished_at=row.get("finished_at"),
+            failures=[_Failure(f["image_id"], f["image_url"], f["reason"] or "") for f in failures],
+        )
+
     def record_failure(self, image_id: str, image_url: str, reason: str) -> None:
         self.failed_images += 1
         if len(self.failures) < config.DATA_DUMP_MAX_FAILURES_TRACKED:
             self.failures.append(_Failure(image_id, image_url, reason))
+
+    @property
+    def resumable(self) -> bool:
+        return self.status in db.RESUMABLE_STATUSES and self.pending_images > 0
 
     def snapshot(self) -> dict:
         return {
@@ -137,10 +169,12 @@ class DataDumpJob:
             "total_images": self.total_images,
             "processed_images": self.processed_images,
             "failed_images": self.failed_images,
+            "pending_images": self.pending_images,
             "rows_written": self.rows_written,
-            "detections": self.detections,
+            "detections": self.rows_written,
+            "resumable": self.resumable,
             "error": self.error,
-            "created_at": self.created_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "failures": [
@@ -151,37 +185,91 @@ class DataDumpJob:
         }
 
 
-_JOBS: dict[str, DataDumpJob] = {}
+# Jobs with a task running *in this process*. Everything else is read from
+# Postgres, so a job stays visible across restarts.
+_LIVE: dict[str, DataDumpJob] = {}
 _TASKS: set[asyncio.Task] = set()
 
 
 def get_job(job_id: str) -> DataDumpJob | None:
-    return _JOBS.get(job_id)
+    live = _LIVE.get(job_id)
+    if live:
+        return live
+    row = db.load_job(job_id)
+    if not row:
+        return None
+    failures = db.recent_failures(job_id, config.DATA_DUMP_MAX_FAILURES_TRACKED)
+    return DataDumpJob.from_db(row, failures)
 
 
-def list_jobs() -> list[DataDumpJob]:
-    return sorted(_JOBS.values(), key=lambda j: j.created_at, reverse=True)
+def list_jobs(limit: int = 25) -> list[DataDumpJob]:
+    jobs: list[DataDumpJob] = []
+    for row in db.list_jobs(limit):
+        live = _LIVE.get(row["job_id"])
+        jobs.append(live if live else DataDumpJob.from_db(row, []))
+    return jobs
 
 
 def request_cancel(job_id: str) -> bool:
-    job = _JOBS.get(job_id)
+    job = _LIVE.get(job_id)
     if not job or job.status not in ("queued", "running"):
         return False
     job.cancel_requested = True
     return True
 
 
-def start_job(source_filename: str, rows: list[tuple[str, str]]) -> DataDumpJob:
+async def start_job(source_filename: str, rows: list[tuple[str, str]]) -> DataDumpJob:
+    """Persist the whole work queue, then start processing it.
+
+    Async because the task has to be created on the event loop, while the
+    (blocking) write of the work queue goes to a worker thread.
+    """
+    job_id = uuid.uuid4().hex[:12]
+    stored = await asyncio.to_thread(db.create_job, job_id, source_filename, rows)
     job = DataDumpJob(
-        job_id=uuid.uuid4().hex[:12],
+        job_id=job_id,
         source_filename=source_filename,
-        total_images=len(rows),
+        total_images=stored,
+        pending_images=stored,
     )
-    _JOBS[job.job_id] = job
-    task = asyncio.create_task(_run(job, rows))
+    _spawn(job)
+    return job
+
+
+async def resume_job(job_id: str) -> DataDumpJob | None:
+    """Pick an interrupted/canceled/failed job back up from its pending rows."""
+    if job_id in _LIVE:
+        return _LIVE[job_id]
+    job = await asyncio.to_thread(get_job, job_id)
+    if not job or not job.resumable:
+        return None
+    job.cancel_requested = False
+    _spawn(job)
+    return job
+
+
+def _spawn(job: DataDumpJob) -> None:
+    _LIVE[job.job_id] = job
+    task = asyncio.create_task(_run(job))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
-    return job
+
+
+async def reconcile_on_startup() -> list[str]:
+    """Reopen jobs cut off by a restart, and resume them unless disabled."""
+    interrupted = await asyncio.to_thread(db.reconcile_interrupted_jobs)
+    if not interrupted:
+        return []
+    logger.info("Data dump: %d interrupted job(s) found: %s", len(interrupted), interrupted)
+    if not config.DATA_DUMP_AUTO_RESUME:
+        return interrupted
+
+    resumed = []
+    for job_id in interrupted:
+        if await resume_job(job_id):
+            resumed.append(job_id)
+            logger.info("Data dump %s: auto-resumed", job_id)
+    return resumed
 
 
 # ---------- Download ----------
@@ -217,29 +305,32 @@ async def _download(client: httpx.AsyncClient, url: str, retries: int) -> bytes:
 
 
 # ---------- GPU work (runs in a worker thread) ----------
-def _process_image(conn, image_id: str, image_bytes: bytes) -> int:
+def _process_image(conn, job_id: str, image_id: str, image_bytes: bytes) -> int:
     width, height, crops = detection_service.detect_products(image_bytes)
-    if not crops:
-        return 0
-
-    crop_bytes = [cbytes for cbytes, _ in crops]
-    labels = classifier.classify_batch(crop_bytes, candidate_labels=model_config.active_known_labels())
 
     rows: list[db.DetectionRow] = []
-    for (_, (x1, y1, x2, y2)), (class_name, _is_unknown) in zip(crops, labels):
-        x_center = ((x1 + x2) / 2) / width
-        y_center = ((y1 + y2) / 2) / height
-        bbox_width = (x2 - x1) / width
-        bbox_height = (y2 - y1) / height
-        rows.append((image_id, class_name, x_center, y_center, bbox_width, bbox_height))
+    if crops:
+        crop_bytes = [cbytes for cbytes, _ in crops]
+        labels = classifier.classify_batch(
+            crop_bytes, candidate_labels=model_config.active_known_labels()
+        )
+        for (_, (x1, y1, x2, y2)), (class_name, _is_unknown) in zip(crops, labels):
+            x_center = ((x1 + x2) / 2) / width
+            y_center = ((y1 + y2) / 2) / height
+            bbox_width = (x2 - x1) / width
+            bbox_height = (y2 - y1) / height
+            rows.append((image_id, class_name, x_center, y_center, bbox_width, bbox_height))
 
-    return db.insert_detections(conn, rows)
+    # Detections and the "this image is done" mark commit together, so a crash
+    # can never duplicate rows on resume.
+    return db.complete_item(conn, job_id, image_id, rows)
 
 
 # ---------- Orchestration ----------
-async def _run(job: DataDumpJob, rows: list[tuple[str, str]]) -> None:
+async def _run(job: DataDumpJob) -> None:
     job.status = "running"
-    job.started_at = _now()
+    job.started_at = job.started_at or _now()
+    job.error = None
 
     # Fail fast if the database is unreachable.
     try:
@@ -248,24 +339,54 @@ async def _run(job: DataDumpJob, rows: list[tuple[str, str]]) -> None:
         job.status = "failed"
         job.error = f"Database unreachable: {e}"
         job.finished_at = _now()
+        _LIVE.pop(job.job_id, None)
         logger.error("Data dump %s aborted: %s", job.job_id, e)
         return
 
-    conn = await asyncio.to_thread(db.connect)
-    ready: asyncio.Queue = asyncio.Queue(maxsize=config.DATA_DUMP_QUEUE_MAX)
-    row_q: asyncio.Queue = asyncio.Queue()
-    for row in rows:
-        row_q.put_nowait(row)
+    # work_conn is driven only by the GPU consumer thread; meta_conn handles
+    # bookkeeping from the event loop. Separate connections, because a commit
+    # is connection-wide and would otherwise cut a detection insert in half.
+    work_conn = await asyncio.to_thread(db.connect)
+    meta_conn = await asyncio.to_thread(db.connect, True)
+    meta_lock = asyncio.Lock()
 
-    timeout = httpx.Timeout(
-        connect=config.DATA_DUMP_CONNECT_TIMEOUT,
-        read=config.DATA_DUMP_READ_TIMEOUT,
-        write=config.DATA_DUMP_CONNECT_TIMEOUT,
-        pool=None,
-    )
-    n_workers = max(1, min(config.DATA_DUMP_DOWNLOAD_CONCURRENCY, len(rows)))
+    async def mark_failed(image_id: str, url: str, reason: str) -> None:
+        job.record_failure(image_id, url, reason)
+        job.pending_images = max(0, job.pending_images - 1)
+        async with meta_lock:
+            try:
+                await asyncio.to_thread(db.mark_item_failed, meta_conn, job.job_id, image_id, reason)
+            except Exception as e:  # noqa: BLE001 - bookkeeping must not kill the run
+                logger.error("Data dump %s: could not record failure for %s: %s", job.job_id, image_id, e)
 
     try:
+        pending = await asyncio.to_thread(db.pending_items, meta_conn, job.job_id)
+        job.pending_images = len(pending)
+        if not pending:
+            job.status = "completed"
+            await asyncio.to_thread(
+                db.set_job_status, meta_conn, job.job_id, "completed", finished=True
+            )
+            job.finished_at = _now()
+            return
+
+        await asyncio.to_thread(
+            db.set_job_status, meta_conn, job.job_id, "running", started=True
+        )
+
+        ready: asyncio.Queue = asyncio.Queue(maxsize=config.DATA_DUMP_QUEUE_MAX)
+        row_q: asyncio.Queue = asyncio.Queue()
+        for row in pending:
+            row_q.put_nowait(row)
+
+        timeout = httpx.Timeout(
+            connect=config.DATA_DUMP_CONNECT_TIMEOUT,
+            read=config.DATA_DUMP_READ_TIMEOUT,
+            write=config.DATA_DUMP_CONNECT_TIMEOUT,
+            pool=None,
+        )
+        n_workers = max(1, min(config.DATA_DUMP_DOWNLOAD_CONCURRENCY, len(pending)))
+
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
@@ -285,9 +406,9 @@ async def _run(job: DataDumpJob, rows: list[tuple[str, str]]) -> None:
                             data = await _download(client, url, config.DATA_DUMP_RETRIES)
                             await ready.put((image_id, url, data))
                         except _Permanent as e:
-                            job.record_failure(image_id, url, str(e))
+                            await mark_failed(image_id, url, str(e))
                         except Exception as e:  # noqa: BLE001 - never let one URL kill a worker
-                            job.record_failure(image_id, url, f"download_error: {e}")
+                            await mark_failed(image_id, url, f"download_error: {e}")
                     finally:
                         row_q.task_done()
 
@@ -305,12 +426,14 @@ async def _run(job: DataDumpJob, rows: list[tuple[str, str]]) -> None:
                         if job.cancel_requested:
                             continue
                         try:
-                            written = await asyncio.to_thread(_process_image, conn, image_id, data)
+                            written = await asyncio.to_thread(
+                                _process_image, work_conn, job.job_id, image_id, data
+                            )
                             job.rows_written += written
-                            job.detections += written
                             job.processed_images += 1
+                            job.pending_images = max(0, job.pending_images - 1)
                         except Exception as e:  # noqa: BLE001
-                            job.record_failure(image_id, url, f"inference_error: {e}")
+                            await mark_failed(image_id, url, f"inference_error: {e}")
                             logger.exception("Data dump %s: image %s failed", job.job_id, image_id)
                     finally:
                         ready.task_done()
@@ -318,10 +441,24 @@ async def _run(job: DataDumpJob, rows: list[tuple[str, str]]) -> None:
             await asyncio.gather(produce(), consume())
 
         job.status = "canceled" if job.cancel_requested else "completed"
+        await asyncio.to_thread(
+            db.set_job_status, meta_conn, job.job_id, job.status, finished=True
+        )
     except Exception as e:  # noqa: BLE001
         job.status = "failed"
         job.error = str(e)
         logger.exception("Data dump %s crashed", job.job_id)
+        try:
+            await asyncio.to_thread(
+                db.set_job_status, meta_conn, job.job_id, "failed", error=str(e), finished=True
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Data dump %s: could not persist failed status", job.job_id)
     finally:
-        await asyncio.to_thread(conn.close)
         job.finished_at = _now()
+        _LIVE.pop(job.job_id, None)
+        for conn in (work_conn, meta_conn):
+            try:
+                await asyncio.to_thread(conn.close)
+            except Exception:  # noqa: BLE001
+                pass
