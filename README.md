@@ -37,6 +37,17 @@ python run.py                 # -> http://127.0.0.1:8000  (override with PORT=..
 Hot-reload is **off** by default, because a reload restarts the process and cuts
 off a running data dump. Use `RELOAD=1 python run.py` while editing backend code.
 
+**Setting up a new machine:** `schema.sql` in the project root creates every
+table and index in an empty database:
+
+```bash
+createdb -h localhost -U postgres shelf_analytics_db
+psql -h localhost -U postgres -d shelf_analytics_db -v ON_ERROR_STOP=1 -f schema.sql
+```
+
+It is safe to re-run. The app also creates what it needs at startup, so this is
+optional — it exists so a server can be prepared before the app first runs.
+
 **Terminal 2 — frontend (UI, port 5173):**
 
 ```bash
