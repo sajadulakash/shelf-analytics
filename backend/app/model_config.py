@@ -9,6 +9,7 @@ as *known* (anything else is reported as ``Unknown``). The selection is saved to
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from app import config
 
 # In-memory cache, invalidated on save().
 _CACHE: dict | None = None
+# Derived identity of the active setup (see active_config_key).
+_KEY_CACHE: str | None = None
 
 
 def _is_unknown_label(label: str) -> bool:
@@ -109,7 +112,7 @@ def load() -> dict:
 
 
 def save(update: dict) -> dict:
-    global _CACHE
+    global _CACHE, _KEY_CACHE
     current = load()
 
     det = update.get("detection_model") or current["detection_model"]
@@ -134,6 +137,7 @@ def save(update: dict) -> dict:
     }
     config.MODEL_CONFIG_FILE.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
     _CACHE = dict(saved)
+    _KEY_CACHE = None
     return dict(saved)
 
 
@@ -152,3 +156,124 @@ def active_use_sahi() -> bool:
 
 def active_known_labels() -> list[str]:
     return load()["known_labels"]
+
+
+# ---------- Identity of the active setup ----------
+# The Data Dump pipeline skips an image it has already processed, but "already
+# processed" only means something if the setup is provably the same one. A model
+# *name* is not enough: retraining and overwriting best.pt would keep the name
+# and silently serve stale labels. So the key below covers the weights' actual
+# contents plus every setting that changes what gets written to the database.
+
+
+def _fingerprint_cache() -> dict:
+    path = config.MODEL_FINGERPRINT_FILE
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_fingerprint_cache(cache: dict) -> None:
+    try:
+        config.MODEL_FINGERPRINT_FILE.write_text(
+            json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass  # the cache is an optimisation; losing it only costs a re-hash
+
+
+def _file_fingerprint(path: Path, cache: dict) -> str:
+    """Content hash of one file, cached against its size + mtime.
+
+    Hashing the bytes (rather than trusting size/mtime alone) means a model
+    that is merely re-copied or re-downloaded keeps its identity, while a
+    genuinely different file always gets a new one.
+    """
+    if not path.exists():
+        return "missing"
+    stat = path.stat()
+    key = str(path)
+    stamp = [stat.st_size, stat.st_mtime_ns]
+    hit = cache.get(key)
+    if isinstance(hit, dict) and hit.get("stamp") == stamp and hit.get("sha256"):
+        return hit["sha256"]
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    sha = digest.hexdigest()
+    cache[key] = {"stamp": stamp, "sha256": sha}
+    return sha
+
+
+def _dir_fingerprint(model_dir: Path, cache: dict) -> str:
+    """Content hash of the files in a classifier dir that affect its output."""
+    parts = [
+        _file_fingerprint(model_dir / name, cache)
+        for name in ("config.json", "model.safetensors", "preprocessor_config.json")
+    ]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def active_config_key() -> str:
+    """Stable id for "this exact inference setup".
+
+    Two runs share a key only if the same weights, the same detection mode and
+    the same thresholds/labels would produce the same rows. Change any of them
+    and previously processed images stop matching, so they are re-inferred
+    instead of being wrongly skipped.
+    """
+    global _KEY_CACHE
+    if _KEY_CACHE is not None:
+        return _KEY_CACHE
+
+    cfg = load()
+    cache = _fingerprint_cache()
+    before = json.dumps(cache, sort_keys=True)
+
+    parts: dict = {
+        "detection_model": cfg["detection_model"],
+        "detection_fp": _file_fingerprint(active_detection_path(), cache),
+        "classification_model": cfg["classification_model"],
+        "classification_fp": _dir_fingerprint(active_classification_dir(), cache),
+        "use_sahi": bool(cfg["use_sahi"]),
+        "detection_conf": config.DATA_DUMP_DETECTION_CONF,
+        "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,
+        "known_labels": sorted(cfg["known_labels"]),
+    }
+    if cfg["use_sahi"]:
+        # Slicing parameters change the detections themselves, so they are part
+        # of the identity only when slicing is actually on.
+        parts["sahi"] = {
+            "slice": [config.SAHI_SLICE_WIDTH, config.SAHI_SLICE_HEIGHT],
+            "overlap": config.SAHI_OVERLAP_RATIO,
+            "conf": config.SAHI_CONFIDENCE_THRESHOLD,
+            "postprocess": config.SAHI_POSTPROCESS_TYPE,
+            "metric": config.SAHI_MATCH_METRIC,
+            "threshold": config.SAHI_MATCH_THRESHOLD,
+        }
+
+    if json.dumps(cache, sort_keys=True) != before:
+        _save_fingerprint_cache(cache)
+
+    blob = json.dumps(parts, sort_keys=True, separators=(",", ":"))
+    _KEY_CACHE = hashlib.sha256(blob.encode()).hexdigest()[:32]
+    return _KEY_CACHE
+
+
+def active_config_summary() -> dict:
+    """Human-readable version of what the config key stands for."""
+    cfg = load()
+    return {
+        "config_key": active_config_key(),
+        "detection_model": cfg["detection_model"],
+        "classification_model": cfg["classification_model"],
+        "use_sahi": bool(cfg["use_sahi"]),
+        "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,
+        "known_label_count": len(cfg["known_labels"]),
+    }

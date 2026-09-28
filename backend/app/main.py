@@ -274,6 +274,42 @@ async def confidence_records(limit: int = 100):
     }
 
 
+# ---------- Runtime activity ----------
+@app.get("/api/runtime")
+async def runtime_activity(limit: int = 25):
+    """What the pipeline has been doing lately — one entry per image.
+
+    Powers the Runtime page: the last N images to be dumped, skipped or failed,
+    plus whichever job is currently working and the setup it is running under.
+    """
+    limit = max(1, min(limit, 200))
+    try:
+        events = await asyncio.to_thread(db.recent_activity, limit)
+        ledger = await asyncio.to_thread(db.ledger_stats)
+        jobs = await asyncio.to_thread(data_dump.list_jobs, 5)
+    except Exception as e:  # noqa: BLE001 - the page should degrade, not break
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
+
+    active = next((j for j in jobs if j.status in ("queued", "running")), None)
+    return {
+        "config": model_config.active_config_summary(),
+        "ledger_rows": ledger["ledger_rows"],
+        "active_job": active.snapshot() if active else None,
+        "events": [
+            {
+                "image_id": e["image_id"],
+                "status": e["status"],
+                "detections": e["rows_written"],
+                "reason": e["reason"],
+                "job_id": e["job_id"],
+                "source_filename": e["source_filename"],
+                "at": e["updated_at"].isoformat() if e["updated_at"] else None,
+            }
+            for e in events
+        ],
+    }
+
+
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
 

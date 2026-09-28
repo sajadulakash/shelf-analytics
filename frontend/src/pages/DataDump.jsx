@@ -35,7 +35,7 @@ export default function DataDump() {
   const inputRef = useRef(null);
 
   const running = isActive(job);
-  const done = job ? job.processed_images + job.failed_images : 0;
+  const done = job ? job.processed_images + job.failed_images + job.skipped_images : 0;
   const pct = job && job.total_images ? Math.round((done / job.total_images) * 100) : 0;
 
   const refreshJobs = useCallback(async () => {
@@ -207,12 +207,19 @@ export default function DataDump() {
             </div>
 
             {/* Live stats */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               <Stat label="Images" value={job.total_images} tone="ink" />
               <Stat label="Processed" value={job.processed_images} tone="brand" />
+              <Stat label="Skipped" value={job.skipped_images} tone="violet" />
               <Stat label="Failed" value={job.failed_images} tone="danger" />
               <Stat label="Rows written" value={job.rows_written.toLocaleString()} tone="ink" />
             </div>
+            {job.skipped_images > 0 && (
+              <p className="mono mt-3 text-xs text-muted">
+                {job.skipped_images.toLocaleString()} image(s) already processed under this exact
+                model setup — inference skipped, existing rows kept.
+              </p>
+            )}
 
             {/* Interrupted — the job outlived the process that was running it */}
             {job.status === "interrupted" && (
@@ -233,6 +240,7 @@ export default function DataDump() {
                   </svg>
                 </span>
                 {job.processed_images} images processed · {job.rows_written.toLocaleString()} products dumped to Postgres
+                {job.skipped_images > 0 && ` · ${job.skipped_images} skipped`}
                 {job.failed_images > 0 && ` · ${job.failed_images} failed`}
               </div>
             )}

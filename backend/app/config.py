@@ -44,6 +44,9 @@ SWINV2_DIR = MODELS_DIR / "swinv2"
 # Active model + label selection, chosen on the Model Configuration page and
 # remembered here until reconfigured.
 MODEL_CONFIG_FILE = DATA_DIR / "model_config.json"
+# Cached content hashes of the model files, so the identity of a run can be
+# derived without re-hashing hundreds of MB on every job.
+MODEL_FINGERPRINT_FILE = DATA_DIR / "model_fingerprints.json"
 
 # Legacy defaults / fallback paths.
 YOLO_MODEL_PATH = YOLO_DIR / "best.pt"

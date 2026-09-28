@@ -3,13 +3,13 @@ import Sidebar from "./components/Sidebar";
 import ExploreProcess from "./pages/ExploreProcess";
 import ModelConfig from "./pages/ModelConfig";
 import DataDump from "./pages/DataDump";
-import Confidence from "./pages/Confidence";
+import Runtime from "./pages/Runtime";
 
 const MOBILE_NAV = [
   ["/models", "Models"],
   ["/", "Process"],
   ["/data-dump", "Data"],
-  ["/confidence", "Confidence"],
+  ["/runtime", "Runtime"],
 ];
 
 export default function App() {
@@ -39,7 +39,8 @@ export default function App() {
             <Route path="/" element={<ExploreProcess />} />
             <Route path="/models" element={<ModelConfig />} />
             <Route path="/data-dump" element={<DataDump />} />
-            <Route path="/confidence" element={<Confidence />} />
+            <Route path="/runtime" element={<Runtime />} />
+            <Route path="/confidence" element={<Navigate to="/runtime" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

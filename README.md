@@ -83,7 +83,7 @@ VITE_API_BASE=http://192.168.68.64:8000 npm run build
 | **Model Configuration** | `/models` | Pick the YOLO weights and SwinV2 classifier, toggle SAHI on/off, and check which labels count as *known*. Saved to `backend/data/model_config.json` and used by every pipeline run. |
 | **Explore Process** | `/` | Upload one shelf image → detect → classify each crop → report. Shows the annotated image, every classified crop (click to enlarge), a known-products-only overlay, and label counts. |
 | **Database Data Dump** | `/data-dump` | Upload a CSV of `image_id, image_url`; the backend downloads each image, runs detect + classify, and writes rows to Postgres. Live progress, counts, cancel, and per-image failures. Runs survive reloads and restarts — see [Durable dump jobs](#durable-dump-jobs). |
-| **Confidence** | `/confidence` | Recent classification confidence log, read from `backend/results/classification_log.jsonl`. |
+| **Runtime** | `/runtime` | Live feed of what the pipeline is doing — the last 10/15/25/50/100 images to be **dumped**, **skipped** or **failed**, the active job's progress, and the model setup in use. Refreshes every 2s. |
 
 ## Configuration
 
@@ -126,6 +126,37 @@ Backend behaviour is controlled by environment variables (see
 `DATA_DUMP_RETRIES` (`1`), `DATA_DUMP_MAX_FAILURES_TRACKED` (`200`),
 `DATA_DUMP_DETECTION_CONF` (`0.25`), `DATA_DUMP_AUTO_RESUME` (`1`).
 
+### Skipping images that are already done
+
+An image is re-inferred only when it has to be. Before a job starts, one
+set-based statement marks every row whose image has already been processed
+**under the exact same setup** as `skipped`; those images are never downloaded,
+never hit the GPU, and their existing rows are left alone.
+
+"The same setup" is a `config_key` — a hash of what actually determines the
+output:
+
+- the **contents** of the detection weights and the classifier directory (a
+  sha256, cached against size+mtime, so retraining and overwriting `best.pt`
+  produces a new key instead of silently serving stale labels),
+- `use_sahi` and, when slicing is on, the slice/overlap/merge settings,
+- the detection confidence and `SWINV2_CONFIDENCE_THRESHOLD`,
+- the selected known-label set.
+
+Change any of them and previously processed images stop matching, so they are
+re-inferred rather than wrongly skipped.
+
+The lookup is a table of its own, `image_inference_runs`, holding one row per
+(image, config). It is deliberately *not* `product_detections`: that table
+averages ~228 rows per image, so asking "has this been done?" there would mean
+searching something two orders of magnitude larger than the question needs. The
+check is a primary-key probe, so it stays fast as the ledger grows — going from
+20 lakh to 1 crore rows costs roughly one extra page read — and it runs once per
+job as a single join, never once per image.
+
+The ledger row is written in the same transaction as the image's detections, so
+it can never claim an image is done when its rows were rolled back.
+
 ### Durable dump jobs
 
 A dump run is not held in memory, so **closing the tab, reloading the browser,
@@ -161,6 +192,27 @@ CREATE TABLE product_detections (
 );
 ```
 
+### Maintenance
+
+Two jobs are too heavy for startup on an existing `product_detections` table and
+are run by hand:
+
+```bash
+cd backend
+python -m app.maintenance ledger-status      # ledger coverage + active config key
+python -m app.maintenance create-indexes     # product_detections(image_id), CONCURRENTLY
+python -m app.maintenance backfill-ledger --config-key <key>
+```
+
+`create-indexes` builds the `image_id` index that per-image lookups need;
+without it they are a full scan of the whole table. It runs `CONCURRENTLY`, so
+reads and writes keep working while it builds.
+
+`backfill-ledger` registers images already in `product_detections` so they are
+skipped in future. It takes the config key explicitly on purpose: registering
+old rows under the *current* key when they came from an older model would make
+the pipeline skip images that ought to be re-inferred.
+
 ### Frontend
 
 | Variable | When | Purpose |
@@ -180,6 +232,9 @@ CREATE TABLE product_detections (
 - Generates product count reports by shop (batch API over `shop-images/`).
 - Bulk CSV → Postgres dump pipeline with live progress and failure reporting,
   resumable after a reload, a restart or a power cut.
+- Skips images already processed under an identical model setup, so re-running a
+  CSV only does the work that is actually new.
+- Runtime page showing the last N images dumped, skipped or failed, live.
 - Keeps classification logs for confidence review.
 
 ## API
@@ -200,7 +255,8 @@ Browse `/docs` for the full interactive list. Main routes:
 | `GET` | `/api/data-dump` · `/api/data-dump/{job_id}` | List jobs / poll one job. |
 | `POST` | `/api/data-dump/{job_id}/cancel` | Request cancellation. |
 | `POST` | `/api/data-dump/{job_id}/resume` | Continue an interrupted/canceled job from its first unfinished row. |
-| `GET` | `/api/confidence?limit=` | Recent classification confidence records. |
+| `GET` | `/api/runtime?limit=` | Recent per-image pipeline events, active job, and current config key. |
+| `GET` | `/api/confidence?limit=` | Recent classification confidence records (from the Explore Process log). |
 | `GET` | `/health` | Health check. |
 
 ## Project Structure
@@ -215,6 +271,7 @@ ShelfAnalytics/
 │   │   ├── model_config.py     # model registry + active selection
 │   │   ├── data_dump.py        # CSV -> download -> detect -> classify -> Postgres
 │   │   ├── db.py               # psycopg2 access layer
+│   │   ├── maintenance.py      # one-off index build / ledger backfill
 │   │   ├── config.py           # paths + env configuration
 │   │   └── models.py           # pydantic request/response models
 │   ├── models/                 # model files are hosted on Hugging Face
@@ -234,7 +291,7 @@ ShelfAnalytics/
 │   │   ├── api.js              # backend calls
 │   │   ├── index.css           # theme tokens
 │   │   ├── components/         # Sidebar, UI primitives
-│   │   └── pages/              # ExploreProcess, ModelConfig, DataDump, Confidence
+│   │   └── pages/              # ExploreProcess, ModelConfig, DataDump, Runtime
 │   ├── index.html
 │   ├── vite.config.js          # dev proxy to the backend
 │   └── package.json            # dev / build / preview

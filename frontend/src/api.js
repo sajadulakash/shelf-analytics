@@ -37,9 +37,9 @@ export async function classifyCrops(runId) {
   return asJson(res, "Classification failed.");
 }
 
-export async function getConfidence(limit = 100) {
-  const res = await fetch(url(`/api/confidence?limit=${limit}`));
-  return asJson(res, "Failed to load confidence records.");
+export async function getRuntime(limit = 25) {
+  const res = await fetch(url(`/api/runtime?limit=${limit}`));
+  return asJson(res, "Failed to load runtime activity.");
 }
 
 export async function getModelConfig() {

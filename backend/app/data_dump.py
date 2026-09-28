@@ -125,8 +125,10 @@ class DataDumpJob:
     status: str = "queued"  # queued|running|completed|failed|canceled|interrupted
     processed_images: int = 0
     failed_images: int = 0
+    skipped_images: int = 0
     rows_written: int = 0
     pending_images: int = 0
+    config_key: str | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=_now)
     started_at: datetime | None = None
@@ -143,8 +145,10 @@ class DataDumpJob:
             status=row["status"],
             processed_images=row["processed_images"],
             failed_images=row["failed_images"],
+            skipped_images=row["skipped_images"],
             rows_written=row["rows_written"],
             pending_images=row["pending_images"],
+            config_key=row.get("config_key"),
             error=row.get("error"),
             created_at=row["created_at"],
             started_at=row.get("started_at"),
@@ -169,10 +173,12 @@ class DataDumpJob:
             "total_images": self.total_images,
             "processed_images": self.processed_images,
             "failed_images": self.failed_images,
+            "skipped_images": self.skipped_images,
             "pending_images": self.pending_images,
             "rows_written": self.rows_written,
             "detections": self.rows_written,
             "resumable": self.resumable,
+            "config_key": self.config_key,
             "error": self.error,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -225,12 +231,14 @@ async def start_job(source_filename: str, rows: list[tuple[str, str]]) -> DataDu
     (blocking) write of the work queue goes to a worker thread.
     """
     job_id = uuid.uuid4().hex[:12]
-    stored = await asyncio.to_thread(db.create_job, job_id, source_filename, rows)
+    config_key = await asyncio.to_thread(model_config.active_config_key)
+    stored = await asyncio.to_thread(db.create_job, job_id, source_filename, rows, config_key)
     job = DataDumpJob(
         job_id=job_id,
         source_filename=source_filename,
         total_images=stored,
         pending_images=stored,
+        config_key=config_key,
     )
     _spawn(job)
     return job
@@ -305,7 +313,7 @@ async def _download(client: httpx.AsyncClient, url: str, retries: int) -> bytes:
 
 
 # ---------- GPU work (runs in a worker thread) ----------
-def _process_image(conn, job_id: str, image_id: str, image_bytes: bytes) -> int:
+def _process_image(conn, job_id: str, image_id: str, image_bytes: bytes, config_key: str) -> int:
     width, height, crops = detection_service.detect_products(image_bytes)
 
     rows: list[db.DetectionRow] = []
@@ -321,9 +329,10 @@ def _process_image(conn, job_id: str, image_id: str, image_bytes: bytes) -> int:
             bbox_height = (y2 - y1) / height
             rows.append((image_id, class_name, x_center, y_center, bbox_width, bbox_height))
 
-    # Detections and the "this image is done" mark commit together, so a crash
-    # can never duplicate rows on resume.
-    return db.complete_item(conn, job_id, image_id, rows)
+    # Detections, the ledger row and the "this image is done" mark commit
+    # together, so a crash can never duplicate rows on resume -- nor leave the
+    # ledger claiming an image was processed when its rows were rolled back.
+    return db.complete_item(conn, job_id, image_id, rows, config_key)
 
 
 # ---------- Orchestration ----------
@@ -360,6 +369,21 @@ async def _run(job: DataDumpJob) -> None:
                 logger.error("Data dump %s: could not record failure for %s: %s", job.job_id, image_id, e)
 
     try:
+        # Derived now rather than at upload time, so a resume after a model
+        # change is recorded under the setup that actually produced the rows.
+        config_key = await asyncio.to_thread(model_config.active_config_key)
+        job.config_key = config_key
+
+        skipped = await asyncio.to_thread(
+            db.skip_already_processed, meta_conn, job.job_id, config_key
+        )
+        if skipped:
+            job.skipped_images += skipped
+            logger.info(
+                "Data dump %s: skipped %d image(s) already processed under config %s",
+                job.job_id, skipped, config_key,
+            )
+
         pending = await asyncio.to_thread(db.pending_items, meta_conn, job.job_id)
         job.pending_images = len(pending)
         if not pending:
@@ -427,7 +451,7 @@ async def _run(job: DataDumpJob) -> None:
                             continue
                         try:
                             written = await asyncio.to_thread(
-                                _process_image, work_conn, job.job_id, image_id, data
+                                _process_image, work_conn, job.job_id, image_id, data, config_key
                             )
                             job.rows_written += written
                             job.processed_images += 1

@@ -4,7 +4,7 @@ const NAV = [
   { to: "/models", label: "Model Configuration" },
   { to: "/", label: "Explore Process" },
   { to: "/data-dump", label: "Database Data Dump" },
-  { to: "/confidence", label: "Confidence" },
+  { to: "/runtime", label: "Runtime" },
 ];
 
 export default function Sidebar() {

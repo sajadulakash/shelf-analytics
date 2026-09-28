@@ -48,9 +48,24 @@ CREATE TABLE IF NOT EXISTS data_dump_jobs (
     status          TEXT NOT NULL,
     total_images    INTEGER NOT NULL,
     error           TEXT,
+    config_key      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at      TIMESTAMPTZ,
     finished_at     TIMESTAMPTZ
+);
+
+ALTER TABLE data_dump_jobs ADD COLUMN IF NOT EXISTS config_key TEXT;
+
+-- One row per (image, inference setup): the ledger the skip check reads.
+-- Deliberately separate from product_detections, which holds ~228 rows per
+-- image -- looking "has this been done?" up there would mean searching a table
+-- two orders of magnitude larger than the question needs.
+CREATE TABLE IF NOT EXISTS image_inference_runs (
+    image_id     TEXT NOT NULL,
+    config_key   TEXT NOT NULL,
+    detections   INTEGER NOT NULL DEFAULT 0,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (image_id, config_key)
 );
 
 CREATE TABLE IF NOT EXISTS data_dump_items (
@@ -66,7 +81,20 @@ CREATE TABLE IF NOT EXISTS data_dump_items (
 
 CREATE INDEX IF NOT EXISTS data_dump_items_job_status_idx
     ON data_dump_items (job_id, status);
+
+-- Feeds the Runtime page. Partial, so a freshly uploaded CSV's pending rows
+-- never sit between the reader and the events it wants.
+CREATE INDEX IF NOT EXISTS data_dump_items_activity_idx
+    ON data_dump_items (updated_at DESC) WHERE status <> 'pending';
 """
+
+# Built separately: on an existing product_detections table this can take
+# minutes, so it is never part of startup. See app/maintenance.py.
+PRODUCT_DETECTIONS_INDEX = (
+    "product_detections_image_id_idx",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS product_detections_image_id_idx "
+    "ON product_detections (image_id)",
+)
 
 # A job in one of these states has work left that a resume can pick up.
 RESUMABLE_STATUSES = ("interrupted", "failed", "canceled")
@@ -110,7 +138,9 @@ def ensure_schema() -> None:
 
 
 # ---------- Job lifecycle ----------
-def create_job(job_id: str, source_filename: str, rows: list[tuple[str, str]]) -> int:
+def create_job(
+    job_id: str, source_filename: str, rows: list[tuple[str, str]], config_key: str | None = None
+) -> int:
     """Persist a new job and all its CSV rows in one transaction.
 
     This is what makes a dump survive a restart: the work queue is on disk
@@ -121,9 +151,9 @@ def create_job(job_id: str, source_filename: str, rows: list[tuple[str, str]]) -
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO data_dump_jobs (job_id, source_filename, status, total_images) "
-                "VALUES (%s, %s, 'queued', %s)",
-                (job_id, source_filename, len(rows)),
+                "INSERT INTO data_dump_jobs (job_id, source_filename, status, total_images, config_key) "
+                "VALUES (%s, %s, 'queued', %s, %s)",
+                (job_id, source_filename, len(rows), config_key),
             )
             execute_values(
                 cur,
@@ -206,18 +236,21 @@ def _counts(cur, job_id: str) -> dict:
         "FROM data_dump_items WHERE job_id = %s GROUP BY status",
         (job_id,),
     )
-    processed = failed = pending = written = 0
+    processed = failed = skipped = pending = written = 0
     for row in cur.fetchall():
         status, n, w = row["status"], int(row["n"]), int(row["written"])
         if status == "done":
             processed, written = n, w
         elif status == "failed":
             failed = n
+        elif status == "skipped":
+            skipped = n
         else:
             pending += n
     return {
         "processed_images": processed,
         "failed_images": failed,
+        "skipped_images": skipped,
         "pending_images": pending,
         "rows_written": written,
     }
@@ -280,7 +313,36 @@ def mark_item_failed(conn, job_id: str, image_id: str, reason: str) -> None:
         conn.commit()
 
 
-def complete_item(conn, job_id: str, image_id: str, rows: Iterable[DetectionRow]) -> int:
+def skip_already_processed(conn, job_id: str, config_key: str) -> int:
+    """Mark this job's images that were already inferred under ``config_key``.
+
+    One set-based statement, not one query per image: a 3 lakh-row CSV would
+    otherwise mean 3 lakh round-trips. Postgres joins the job's rows against the
+    ledger in a single pass, which stays fast as the ledger grows because the
+    join probes a primary-key index rather than scanning.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE data_dump_items i "
+            "   SET status = 'skipped', reason = 'already processed', updated_at = now() "
+            "  FROM image_inference_runs r "
+            " WHERE i.job_id = %s AND i.status = 'pending' "
+            "   AND r.image_id = i.image_id AND r.config_key = %s",
+            (job_id, config_key),
+        )
+        skipped = cur.rowcount
+    if not conn.autocommit:
+        conn.commit()
+    return max(0, skipped)
+
+
+def complete_item(
+    conn,
+    job_id: str,
+    image_id: str,
+    rows: Iterable[DetectionRow],
+    config_key: str | None = None,
+) -> int:
     """Insert an image's detections **and** mark it done, atomically.
 
     Both writes share one transaction, so a crash can never leave detections in
@@ -292,6 +354,15 @@ def complete_item(conn, job_id: str, image_id: str, rows: Iterable[DetectionRow]
         with conn.cursor() as cur:
             if rows:
                 execute_values(cur, _INSERT_SQL, rows)
+            if config_key:
+                # Same transaction as the detections, so the ledger can never
+                # claim an image is done when its rows were rolled back.
+                cur.execute(
+                    "INSERT INTO image_inference_runs (image_id, config_key, detections) "
+                    "VALUES (%s, %s, %s) ON CONFLICT (image_id, config_key) DO UPDATE "
+                    "SET detections = EXCLUDED.detections, processed_at = now()",
+                    (image_id, config_key, len(rows)),
+                )
             cur.execute(
                 "UPDATE data_dump_items SET status = 'done', rows_written = %s, "
                 "updated_at = now() WHERE job_id = %s AND image_id = %s",
@@ -302,3 +373,32 @@ def complete_item(conn, job_id: str, image_id: str, rows: Iterable[DetectionRow]
     except Exception:
         conn.rollback()
         raise
+
+
+def recent_activity(limit: int = 50) -> list[dict]:
+    """Most recent per-image pipeline events, newest first (Runtime page)."""
+    conn = connect(autocommit=True)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT i.image_id, i.status, i.rows_written, i.reason, i.updated_at, "
+                "       i.job_id, j.source_filename "
+                "  FROM data_dump_items i JOIN data_dump_jobs j USING (job_id) "
+                " WHERE i.status <> 'pending' "
+                " ORDER BY i.updated_at DESC LIMIT %s",
+                (limit,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def ledger_stats() -> dict:
+    """Size of the dedup ledger, for the Runtime page header."""
+    conn = connect(autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM image_inference_runs")
+            return {"ledger_rows": int(cur.fetchone()[0])}
+    finally:
+        conn.close()
