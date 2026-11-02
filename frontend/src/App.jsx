@@ -4,12 +4,14 @@ import ExploreProcess from "./pages/ExploreProcess";
 import ModelConfig from "./pages/ModelConfig";
 import DataDump from "./pages/DataDump";
 import Runtime from "./pages/Runtime";
+import ModelVersions from "./pages/ModelVersions";
 
 const MOBILE_NAV = [
   ["/models", "Models"],
   ["/", "Process"],
   ["/data-dump", "Data"],
   ["/runtime", "Runtime"],
+  ["/model-versions", "Versions"],
 ];
 
 export default function App() {
@@ -40,6 +42,8 @@ export default function App() {
             <Route path="/models" element={<ModelConfig />} />
             <Route path="/data-dump" element={<DataDump />} />
             <Route path="/runtime" element={<Runtime />} />
+            <Route path="/model-versions" element={<Navigate to="/model-versions/detection" replace />} />
+            <Route path="/model-versions/:tab" element={<ModelVersions />} />
             <Route path="/confidence" element={<Navigate to="/runtime" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

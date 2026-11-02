@@ -28,6 +28,7 @@ from app.models import (
     LabelSettingsResponse,
     LabelSettingsUpdate,
     ModelConfigUpdate,
+    ModelVersionIn,
     SyncToggle,
 )
 from app.classifier import UNKNOWN_REPORT_LABEL, available_labels, classify_single
@@ -869,6 +870,45 @@ async def sync_run_now():
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Sync failed: {e}")
     return {**result, **await asyncio.to_thread(sync_service.status)}
+
+
+# ---------- Model Versions dashboard ----------
+# Version and evaluation history of the individual models, entered by hand.
+# Scores travel as fractions 0-1; the frontend shows and accepts percentages.
+@app.get("/api/model-versions")
+async def list_model_versions(model_type: str | None = None):
+    if model_type not in (None, "detection", "classification"):
+        raise HTTPException(status_code=400, detail="model_type must be detection or classification.")
+    try:
+        rows = await asyncio.to_thread(db.list_model_versions, model_type)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
+    return {"versions": rows}
+
+
+async def _save_model_version(write, *args):
+    try:
+        return await asyncio.to_thread(write, *args)
+    except db.DuplicateModelVersion:
+        payload = args[-1]
+        raise HTTPException(
+            status_code=409,
+            detail=f"{payload['model_name']} {payload['version']} is already recorded. "
+            "Edit that entry, or use a different version label.",
+        )
+
+
+@app.post("/api/model-versions", status_code=201)
+async def create_model_version(payload: ModelVersionIn):
+    return await _save_model_version(db.create_model_version, payload.model_dump())
+
+
+@app.put("/api/model-versions/{version_id}")
+async def update_model_version(version_id: int, payload: ModelVersionIn):
+    row = await _save_model_version(db.update_model_version, version_id, payload.model_dump())
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Model version not found: {version_id}")
+    return row
 
 
 # ---------- Serve uploaded crop/detection images (must be AFTER all route definitions) ----------

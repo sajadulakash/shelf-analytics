@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import psycopg2
+import psycopg2.errors
 from psycopg2.extras import RealDictCursor, execute_values
 
 from app import config
@@ -124,6 +125,33 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Version and evaluation history of the individual models (RF-DETR / YOLO
+-- detectors, SwinV2 classifiers), entered by hand and read by the Model
+-- Versions dashboard. Unrelated to model_registry, which records inference
+-- *setups*. model_type decides which metrics apply: a metric that does not
+-- apply, or was not measured, is NULL -- never 0. Scores are fractions 0-1.
+CREATE TABLE IF NOT EXISTS model_versions (
+    id                 BIGSERIAL PRIMARY KEY,
+    model_name         VARCHAR(100) NOT NULL,
+    model_type         VARCHAR(20)  NOT NULL
+                       CHECK (model_type IN ('detection', 'classification')),
+    version            VARCHAR(50)  NOT NULL,
+    training_date      DATE,
+    dataset_name       VARCHAR(200),
+    map50              NUMERIC CHECK (map50     BETWEEN 0 AND 1),
+    map50_95           NUMERIC CHECK (map50_95  BETWEEN 0 AND 1),
+    accuracy           NUMERIC CHECK (accuracy  BETWEEN 0 AND 1),
+    precision          NUMERIC CHECK (precision BETWEEN 0 AND 1),
+    recall             NUMERIC CHECK (recall    BETWEEN 0 AND 1),
+    f1_score           NUMERIC CHECK (f1_score  BETWEEN 0 AND 1),
+    number_of_classes  INTEGER CHECK (number_of_classes >= 0),
+    change_summary     TEXT,
+    model_artifact_uri TEXT,
+    notes              TEXT,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (model_name, version)
 );
 """
 
@@ -653,3 +681,80 @@ def ledger_stats() -> dict:
             return {"ledger_rows": int(cur.fetchone()[0])}
     finally:
         conn.close()
+
+
+# ---------- Model versions (dashboard) ----------
+# Editable columns, in table order. id and created_at are never written by hand.
+MODEL_VERSION_FIELDS = (
+    "model_name", "model_type", "version", "training_date", "dataset_name",
+    "map50", "map50_95", "accuracy", "precision", "recall", "f1_score",
+    "number_of_classes", "change_summary", "model_artifact_uri", "notes",
+)
+_MODEL_VERSION_SCORES = ("map50", "map50_95", "accuracy", "precision", "recall", "f1_score")
+
+
+class DuplicateModelVersion(Exception):
+    """That (model_name, version) pair is already recorded."""
+
+
+def _model_version_json(row: dict) -> dict:
+    """Make a row JSON-ready: NUMERIC -> float, dates -> ISO strings."""
+    out = dict(row)
+    for name in _MODEL_VERSION_SCORES:
+        if out.get(name) is not None:
+            out[name] = float(out[name])
+    for name in ("training_date", "created_at"):
+        if out.get(name) is not None:
+            out[name] = out[name].isoformat()
+    return out
+
+
+def list_model_versions(model_type: str | None = None) -> list[dict]:
+    conn = connect(autocommit=True)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            where, params = ("WHERE model_type = %s", (model_type,)) if model_type else ("", ())
+            cur.execute(
+                f"SELECT * FROM model_versions {where} "
+                "ORDER BY model_type, model_name, training_date NULLS LAST, id",
+                params,
+            )
+            return [_model_version_json(dict(r)) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _write_model_version(sql: str, params: tuple) -> dict | None:
+    conn = connect()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        conn.commit()
+        return _model_version_json(dict(row)) if row else None
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        raise DuplicateModelVersion from None
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def create_model_version(data: dict) -> dict:
+    cols = ", ".join(MODEL_VERSION_FIELDS)
+    marks = ", ".join(["%s"] * len(MODEL_VERSION_FIELDS))
+    return _write_model_version(
+        f"INSERT INTO model_versions ({cols}) VALUES ({marks}) RETURNING *",
+        tuple(data.get(f) for f in MODEL_VERSION_FIELDS),
+    )
+
+
+def update_model_version(version_id: int, data: dict) -> dict | None:
+    """Overwrite every editable column of one row. None if the id does not exist."""
+    sets = ", ".join(f"{f} = %s" for f in MODEL_VERSION_FIELDS)
+    return _write_model_version(
+        f"UPDATE model_versions SET {sets} WHERE id = %s RETURNING *",
+        (*(data.get(f) for f in MODEL_VERSION_FIELDS), version_id),
+    )

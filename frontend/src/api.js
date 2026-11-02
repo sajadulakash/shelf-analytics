@@ -13,7 +13,11 @@ async function asJson(res, fallback) {
     // ignore
   }
   if (!res.ok) {
-    throw new Error(data.detail || data.error || fallback);
+    // FastAPI validation errors arrive as a list of {loc, msg}.
+    const detail = Array.isArray(data.detail)
+      ? data.detail.map((d) => d.msg?.replace(/^Value error, /, "")).join(" ")
+      : data.detail;
+    throw new Error(detail || data.error || fallback);
   }
   return data;
 }
@@ -108,6 +112,21 @@ export async function listDataDumps(limit = 25) {
 export async function resumeDataDump(jobId) {
   const res = await fetch(url(`/api/data-dump/${jobId}/resume`), { method: "POST" });
   return asJson(res, "Failed to resume job.");
+}
+
+// ---------- Model Versions ----------
+export async function listModelVersions() {
+  const res = await fetch(url("/api/model-versions"));
+  return asJson(res, "Failed to load model versions.");
+}
+
+export async function saveModelVersion(id, row) {
+  const res = await fetch(url(id ? `/api/model-versions/${id}` : "/api/model-versions"), {
+    method: id ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(row),
+  });
+  return asJson(res, "Failed to save the model version.");
 }
 
 export const imgSrc = (b64, fallbackUrl) =>

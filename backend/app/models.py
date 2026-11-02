@@ -1,5 +1,9 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+
+from datetime import date
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------- Per-image result ----------
@@ -141,3 +145,56 @@ class ModelConfigUpdate(BaseModel):
 
 class SyncToggle(BaseModel):
     enabled: bool
+
+
+# ---------- Model Versions dashboard ----------
+_Score = float | None
+
+# Which metric columns belong to which model type. A score outside its type is
+# rejected rather than silently stored, so "not applicable" always stays NULL.
+DETECTION_ONLY_METRICS = ("map50", "map50_95")
+CLASSIFICATION_ONLY_METRICS = ("accuracy",)
+
+
+class ModelVersionIn(BaseModel):
+    """One row of ``model_versions``. Scores are fractions 0-1 (94.3% = 0.943)."""
+
+    # model_name / model_type are the table's column names, not pydantic internals.
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_name: str = Field(min_length=1, max_length=100)
+    model_type: Literal["detection", "classification"]
+    version: str = Field(min_length=1, max_length=50)
+    training_date: date | None = None
+    dataset_name: str | None = Field(default=None, max_length=200)
+    map50: _Score = Field(default=None, ge=0, le=1)
+    map50_95: _Score = Field(default=None, ge=0, le=1)
+    accuracy: _Score = Field(default=None, ge=0, le=1)
+    precision: _Score = Field(default=None, ge=0, le=1)
+    recall: _Score = Field(default=None, ge=0, le=1)
+    f1_score: _Score = Field(default=None, ge=0, le=1)
+    number_of_classes: int | None = Field(default=None, ge=0)
+    change_summary: str | None = None
+    model_artifact_uri: str | None = None
+    notes: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value):
+        # Form fields arrive as "" when left empty; store those as NULL.
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @model_validator(mode="after")
+    def _metrics_match_type(self):
+        wrong = (
+            CLASSIFICATION_ONLY_METRICS if self.model_type == "detection" else DETECTION_ONLY_METRICS
+        )
+        given = [name for name in wrong if getattr(self, name) is not None]
+        if given:
+            raise ValueError(
+                f"{', '.join(given)} does not apply to a {self.model_type} model; leave it empty."
+            )
+        return self

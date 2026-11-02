@@ -5,6 +5,7 @@ const NAV = [
   { to: "/", label: "Explore Process" },
   { to: "/data-dump", label: "Database Data Dump" },
   { to: "/runtime", label: "Runtime" },
+  { to: "/model-versions", label: "Model Versions" },
 ];
 
 export default function Sidebar() {

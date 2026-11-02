@@ -60,6 +60,7 @@ cd backend && python sync_worker.py
 | **Explore Process** | Upload one shelf image and watch it go through detect → classify. |
 | **Database Data Dump** | Upload a CSV of `image_id, image_url`; the backend downloads, detects, classifies and writes rows to Postgres. Also holds the sync controls. |
 | **Runtime** | Live feed of the last N images dumped, skipped or failed. |
+| **Model Versions** | Version history and test scores of the detection (RF-DETR / YOLO) and classification (SwinV2) models: current version, score cards with change vs the previous version, trend charts and history. The **Manage data** tab is where versions are added and edited. Stored in the `model_versions` table, scores as fractions 0–1. |
 
 ## How it works
 

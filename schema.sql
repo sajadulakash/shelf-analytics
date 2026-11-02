@@ -76,6 +76,29 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Model Versions dashboard. Metrics are fractions 0-1; NULL = not applicable.
+CREATE TABLE IF NOT EXISTS model_versions (
+    id                 BIGSERIAL PRIMARY KEY,
+    model_name         VARCHAR(100) NOT NULL,
+    model_type         VARCHAR(20)  NOT NULL
+                       CHECK (model_type IN ('detection', 'classification')),
+    version            VARCHAR(50)  NOT NULL,
+    training_date      DATE,
+    dataset_name       VARCHAR(200),
+    map50              NUMERIC CHECK (map50     BETWEEN 0 AND 1),
+    map50_95           NUMERIC CHECK (map50_95  BETWEEN 0 AND 1),
+    accuracy           NUMERIC CHECK (accuracy  BETWEEN 0 AND 1),
+    precision          NUMERIC CHECK (precision BETWEEN 0 AND 1),
+    recall             NUMERIC CHECK (recall    BETWEEN 0 AND 1),
+    f1_score           NUMERIC CHECK (f1_score  BETWEEN 0 AND 1),
+    number_of_classes  INTEGER CHECK (number_of_classes >= 0),
+    change_summary     TEXT,
+    model_artifact_uri TEXT,
+    notes              TEXT,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (model_name, version)
+);
+
 COMMIT;
 
 CREATE INDEX IF NOT EXISTS product_detections_image_id_idx
