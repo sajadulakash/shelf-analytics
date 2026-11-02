@@ -10,7 +10,7 @@ import {
   TYPE_METRICS,
   compareVersions,
   deltaPts,
-  familiesOf,
+  versionsOf,
   formatDate,
   pct,
 } from "../lib/modelVersions";
@@ -56,7 +56,6 @@ export default function ModelVersions() {
       <PageHeader
         kicker="Monitoring"
         title="Model Versions"
-        subtitle="How the detection and classification models have improved, version by version."
         actions={
           <Button onClick={() => setEditing({})}>
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -116,22 +115,12 @@ export default function ModelVersions() {
 }
 
 // ---------- Detection / Classification view ----------
+// All versions of this type form one sequence, even when the model name changes
+// between versions (e.g. YOLO11s v1 -> YOLO26s v2 -> RF-DETR Large v3).
 function TypeView({ type, rows, onAdd }) {
-  const families = useMemo(() => familiesOf(rows, type), [rows, type]);
-  const names = Object.keys(families).sort();
-  // Default to the family with the most recently entered version.
-  const newest = useMemo(() => {
-    let best = null;
-    for (const [name, list] of Object.entries(families)) {
-      const maxId = Math.max(...list.map((r) => r.id));
-      if (!best || maxId > best.maxId) best = { name, maxId };
-    }
-    return best?.name;
-  }, [families]);
-  const [picked, setPicked] = useState(null);
-  const family = picked && families[picked] ? picked : newest;
+  const list = useMemo(() => versionsOf(rows, type), [rows, type]);
 
-  if (!family) {
+  if (list.length === 0) {
     return (
       <Card className="p-6">
         <EmptyHint>
@@ -145,41 +134,23 @@ function TypeView({ type, rows, onAdd }) {
     );
   }
 
-  const list = families[family];
   const current = list[list.length - 1];
   const previous = list.length > 1 ? list[list.length - 2] : null;
   const metricKeys = TYPE_METRICS[type];
   const shown = metricKeys.filter((m) => current[m] != null);
   const missing = metricKeys.filter((m) => current[m] == null);
   const plotted = metricKeys.filter((m) => list.some((r) => r[m] != null));
-  const hasClasses = list.some((r) => r.number_of_classes != null);
-  const points = list.map((r) => ({ label: r.version, sublabel: r.training_date ? formatDate(r.training_date) : "" }));
+  // Class count per version is only charted for classification models.
+  const hasClasses = type === "classification" && list.some((r) => r.number_of_classes != null);
+  // Version on the axis, model name under it (date added when recorded).
+  const points = list.map((r) => ({
+    label: r.version,
+    sublabel: r.model_name,
+    detail: r.training_date ? formatDate(r.training_date) : "",
+  }));
 
   return (
     <div className="space-y-5">
-      {names.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Model family">
-          <span className="kicker mr-1 text-[0.6rem]">Model</span>
-          {names.map((n) => (
-            <button
-              key={n}
-              type="button"
-              role="radio"
-              aria-checked={n === family}
-              onClick={() => setPicked(n)}
-              className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition ${
-                n === family ? "border-ink bg-ink text-white" : "border-line bg-paper text-[#344039] hover:border-[#8e9991]"
-              }`}
-            >
-              {n}
-              <span className={`ml-1.5 text-xs ${n === family ? "text-[#aeb6b0]" : "text-muted"}`}>
-                {families[n].length}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Top area */}
       <Card className="p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -220,12 +191,11 @@ function TypeView({ type, rows, onAdd }) {
       <div className={`grid gap-5 ${hasClasses ? "lg:grid-cols-[3fr_2fr]" : ""}`}>
         <Card className="min-w-0 p-6">
           <h3 className="text-lg font-bold text-ink">Scores across versions</h3>
-          <p className="mt-1 text-sm text-muted">
-            {list.length > 1
-              ? "Each point is one recorded version of " + current.model_name + ". Hover for exact values."
-              : "Only one version recorded so far — the trend fills in as versions are added."}
-          </p>
-          {list.length < 2 ? null : plotted.length > 0 ? (
+          {list.length < 2 ? (
+            <div className="mt-4">
+              <EmptyHint>Needs two versions to show a trend.</EmptyHint>
+            </div>
+          ) : plotted.length > 0 ? (
             <>
               {plotted.length > 1 && (
                 <div className="mt-4">
@@ -236,7 +206,7 @@ function TypeView({ type, rows, onAdd }) {
                 <ScoreLineChart
                   points={points}
                   series={plotted.map((m) => ({ key: m, ...METRICS[m], values: list.map((r) => r[m]) }))}
-                  ariaLabel={`${current.model_name} scores by version. Values are in the version history table below.`}
+                  ariaLabel={`${TYPE_LABEL[type]} scores by version. Values are in the version history table below.`}
                 />
               </div>
             </>
@@ -250,14 +220,13 @@ function TypeView({ type, rows, onAdd }) {
         {hasClasses && (
           <Card className="min-w-0 p-6">
             <h3 className="text-lg font-bold text-ink">Classes per version</h3>
-            <p className="mt-1 text-sm text-muted">How many products each version can tell apart.</p>
             <div className="mt-4">
               <CountColumnChart
                 points={points}
                 values={list.map((r) => r.number_of_classes)}
                 color={CLASS_BAR}
                 unit="classes"
-                ariaLabel={`${current.model_name} class count by version`}
+                ariaLabel={`${TYPE_LABEL[type]} class count by version`}
               />
             </div>
           </Card>
@@ -312,19 +281,19 @@ function HistoryTable({ list, type }) {
   const [open, setOpen] = useState(null);
   const metricKeys = TYPE_METRICS[type];
   const newestFirst = [...list].reverse();
-  const cols = 4 + metricKeys.length;
+  const cols = 5 + metricKeys.length;
 
   return (
     <Card className="overflow-hidden">
       <div className="border-b border-line px-6 py-4">
         <h3 className="text-lg font-bold text-ink">Version history</h3>
-        <p className="mt-0.5 text-sm text-muted">Latest first. Open a row for the dataset, notes and model file.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-line bg-[#f8faf8] text-left text-[0.62rem] font-bold uppercase tracking-wide text-muted">
               <th className="px-4 py-3">Version</th>
+              <th className="px-4 py-3">Model</th>
               <th className="px-4 py-3">Trained</th>
               <th className="px-4 py-3 text-right">Classes</th>
               {metricKeys.map((m) => (
@@ -361,6 +330,7 @@ function HistoryTable({ list, type }) {
                       </button>
                       {i === 0 && <Badge tone="green" className="ml-2">current</Badge>}
                     </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-ink">{r.model_name}</td>
                     <td className="mono whitespace-nowrap px-4 py-3 text-muted">{formatDate(r.training_date)}</td>
                     <td className="mono px-4 py-3 text-right tabular-nums text-ink">{r.number_of_classes ?? "—"}</td>
                     {metricKeys.map((m) => (
@@ -427,7 +397,6 @@ function ManageView({ rows, onAdd, onEdit }) {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
         <div>
           <h3 className="text-lg font-bold text-ink">Model data</h3>
-          <p className="mt-0.5 text-sm text-muted">Every recorded version. Add a new one, or edit an entry to correct it.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-md border border-line bg-[#f3f6f4] p-1" role="radiogroup" aria-label="Filter by type">

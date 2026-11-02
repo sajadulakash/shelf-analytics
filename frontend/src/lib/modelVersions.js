@@ -23,8 +23,9 @@ export const TYPE_LABEL = { detection: "Detection", classification: "Classificat
 
 const versionCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-// Oldest -> newest within one model family. Training date when both rows have
-// one; otherwise the version label in natural order (v2 < v10); then entry order.
+// Oldest -> newest. Training date when both rows have one; otherwise the
+// version label in natural order (v2 < v10); then entry order. Works across
+// model names, because versions run as one sequence per model type.
 export function compareVersions(a, b) {
   if (a.training_date && b.training_date && a.training_date !== b.training_date) {
     return a.training_date < b.training_date ? -1 : 1;
@@ -33,15 +34,9 @@ export function compareVersions(a, b) {
   return byLabel || a.id - b.id;
 }
 
-// { model_name: [versions oldest -> newest] } for one model type.
-export function familiesOf(rows, type) {
-  const out = {};
-  for (const r of rows) {
-    if (r.model_type !== type) continue;
-    (out[r.model_name] ||= []).push(r);
-  }
-  for (const list of Object.values(out)) list.sort(compareVersions);
-  return out;
+// Every version of one model type, whatever the model name, oldest -> newest.
+export function versionsOf(rows, type) {
+  return rows.filter((r) => r.model_type === type).sort(compareVersions);
 }
 
 export const pct = (v, digits = 1) => (v == null ? "—" : `${(v * 100).toFixed(digits)}%`);

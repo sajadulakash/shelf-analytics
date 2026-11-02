@@ -26,6 +26,14 @@ function useWidth(fallback = 320) {
   return [ref, width];
 }
 
+// Shorten an axis label to fit its slot (about 6.2px per char at 10.5px);
+// the full text stays in the tooltip.
+function fit(text, maxPx) {
+  if (!text) return text;
+  const max = Math.max(3, Math.floor(maxPx / 6.2));
+  return text.length <= max ? text : text.slice(0, max - 1) + "…";
+}
+
 // Clean percentage ticks around the data (values are fractions 0-1). A line
 // chart of scores may start above zero; the axis says where it starts.
 function percentScale(values) {
@@ -84,7 +92,7 @@ export function Legend({ items, shape = "line" }) {
 
 /**
  * Score lines across versions.
- * points: [{ label, sublabel }]   series: [{ key, label, color, values: [fraction|null] }]
+ * points: [{ label, sublabel, detail? }]  (detail shows in the tooltip only)   series: [{ key, label, color, values: [fraction|null] }]
  */
 export function ScoreLineChart({ points, series, height = 280, ariaLabel }) {
   const [ref, width] = useWidth();
@@ -168,7 +176,7 @@ export function ScoreLineChart({ points, series, height = 280, ariaLabel }) {
             </text>
             {p.sublabel && (
               <text x={xAt(i)} y={height - pad.bottom + 32} textAnchor="middle" fontSize="10.5" fill={INK_2}>
-                {p.sublabel}
+                {fit(p.sublabel, n > 1 ? (plotW - 2 * inset) / (n - 1) - 6 : plotW)}
               </text>
             )}
           </g>
@@ -213,7 +221,7 @@ export function ScoreLineChart({ points, series, height = 280, ariaLabel }) {
           y={pad.top}
           width={width}
           title={points[hover].label}
-          subtitle={points[hover].sublabel}
+          subtitle={[points[hover].sublabel, points[hover].detail].filter(Boolean).join(" · ")}
           rows={series.map((s) => ({
             label: s.label,
             color: s.color,
@@ -289,7 +297,7 @@ export function CountColumnChart({ points, values, color, unit, height = 240, ar
               </text>
               {p.sublabel && (
                 <text x={cx} y={base + 32} textAnchor="middle" fontSize="10.5" fill={INK_2}>
-                  {p.sublabel}
+                  {fit(p.sublabel, band - 12)}
                 </text>
               )}
             </g>
@@ -302,7 +310,7 @@ export function CountColumnChart({ points, values, color, unit, height = 240, ar
           y={pad.top}
           width={width}
           title={points[hover].label}
-          subtitle={points[hover].sublabel}
+          subtitle={[points[hover].sublabel, points[hover].detail].filter(Boolean).join(" · ")}
           rows={[{ label: unit, value: values[hover], color }]}
         />
       )}
