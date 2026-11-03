@@ -178,6 +178,10 @@ def _model_config_payload() -> dict:
     cfg = model_config.load()
     return {
         "detection_models": model_config.list_detection_models(),
+        # Per detection model: type (YOLO / RF-DETR), SAHI support, cut-off.
+        "detection_model_details": model_config.detection_models(),
+        # Folders in models/yolo that are not a usable model, with the reason.
+        "detection_problems": model_config.detection_problems(),
         "classification_models": model_config.list_classification_models(),
         "detection_model": cfg["detection_model"],
         "classification_model": cfg["classification_model"],

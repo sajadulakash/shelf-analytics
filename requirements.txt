@@ -16,6 +16,8 @@ transformers==4.41.2
 safetensors==0.7.0
 ultralytics==8.4.35
 sahi==0.12.1
+# RF-DETR style ONNX detection models (GPU build; do not also install plain onnxruntime)
+onnxruntime-gpu==1.23.2
 
 # Database Data Dump: async image downloads + Postgres
 httpx==0.28.1

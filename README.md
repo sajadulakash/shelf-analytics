@@ -1,7 +1,7 @@
 # ShelfAnalytics
 
 Shelf analysis for mudi shops. It takes a shop shelf image, detects the products
-in it with YOLO (optionally sliced with SAHI), classifies each crop with a local
+in it with YOLO (optionally sliced with SAHI) or an RF-DETR ONNX model, classifies each crop with a local
 SwinV2 model, and reports which SKUs are present. Crops below the confidence
 threshold, or outside the configured label set, are reported as `Unknown`.
 
@@ -27,9 +27,17 @@ cp backend/.env.example backend/.env    # DB_PASSWORD, and SYNC_DB_PASSWORD if s
 **3. Model weights** — not in git, pull from Hugging Face into:
 
 ```
-backend/models/yolo/best.pt
+backend/models/yolo/best.pt                     # YOLO: drop the .pt file in
+backend/models/yolo/<model>/                    # RF-DETR: one folder per model
+    <name>.onnx
+    model_info.json                             #   from the export (input size, classes, cut-off)
 backend/models/swinv2/<model>/     # config.json, model.safetensors, preprocessor_config.json
 ```
+
+Every `.pt` file and every complete RF-DETR folder shows up on the Model
+Configuration page; a folder that is missing something is listed there with the
+reason. RF-DETR runs on the whole image at its own input size and cut-off from
+`model_info.json` — SAHI never applies to it. Its `.pth` checkpoint is not needed.
 
 **4. Backend** (port 8000)
 
@@ -56,7 +64,7 @@ cd backend && python sync_worker.py
 
 | Page | What it does |
 | --- | --- |
-| **Model Configuration** | Pick the YOLO weights and SwinV2 classifier, toggle SAHI, choose which labels count as known. |
+| **Model Configuration** | Pick the detection model (YOLO or RF-DETR) and SwinV2 classifier, toggle SAHI (YOLO only), choose which labels count as known. |
 | **Explore Process** | Upload one shelf image and watch it go through detect → classify. |
 | **Database Data Dump** | Upload a CSV of `image_id, image_url`; the backend downloads, detects, classifies and writes rows to Postgres. Also holds the sync controls. |
 | **Runtime** | Live feed of the last N images dumped, skipped or failed. |
@@ -88,6 +96,7 @@ the full list.
 | `PORT` | `8000` | Backend port. |
 | `RELOAD` | `0` | Hot-reload. Off by default — a reload kills a running dump. |
 | `USE_SAHI` | `1` | Default detection mode; the UI setting wins once saved. |
+| `ONNX_DETECTION_DEVICE` | `cuda` | Where RF-DETR models run (`cuda` or `cpu`). |
 | `SWINV2_CONFIDENCE_THRESHOLD` | `0.88` | Below this a crop is `Unknown`. |
 | `SYNC_INTERVAL_SECONDS` | `3600` | How often the sync worker runs. |
 

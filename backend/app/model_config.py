@@ -1,10 +1,21 @@
 """Active model + label configuration.
 
-Lists the detection (YOLO) and classification (SwinV2) models available under
+Lists the detection and classification (SwinV2) models available under
 ``models/yolo`` and ``models/swinv2``, and persists the user's choice — which
 detection model, which classifier, whether to run SAHI, and which labels count
 as *known* (anything else is reported as ``Unknown``). The selection is saved to
 ``data/model_config.json`` and remembered until reconfigured.
+
+A detection model in ``models/yolo`` is either
+
+* a YOLO ``.pt`` file dropped straight into the folder, run with ultralytics
+  (optionally sliced with SAHI), or
+* a folder named after the model holding one ``.onnx`` file and the export's
+  ``model_info.json`` - an RF-DETR style transformer detector, run with
+  ``onnx_detector`` on the whole image (SAHI never applies to it).
+
+A folder that is not a complete model is left off the list and reported by
+``detection_problems()`` so the page can say why.
 """
 
 from __future__ import annotations
@@ -27,11 +38,194 @@ def _is_unknown_label(label: str) -> bool:
     return str(label).strip().casefold().replace("_", "-").startswith("unknown")
 
 
-# ---------- Registry ----------
-def list_detection_models() -> list[str]:
+# ---------- Registry: detection models ----------
+YOLO_FRAMEWORK = "yolo"
+DETR_ONNX_FRAMEWORK = "rfdetr-onnx"
+FRAMEWORK_LABELS = {YOLO_FRAMEWORK: "YOLO", DETR_ONNX_FRAMEWORK: "RF-DETR"}
+MODEL_INFO_FILE = "model_info.json"
+# model_info.json "framework" values decoded by onnx_detector. Exports without
+# the key are recognised by their outputs (dets + labels) instead.
+_DETR_FRAMEWORK_NAMES = {"rfdetr", "rf-detr", "rfdetr-onnx", "rf-detr-onnx", "lw-detr", "detr", "detr-onnx"}
+_DETR_OUTPUTS = ("dets", "labels")
+_IMAGENET_MEAN = [0.485, 0.456, 0.406]
+_IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+def _yolo_info(path: Path) -> dict:
+    return {
+        "name": path.name,
+        "framework": YOLO_FRAMEWORK,
+        "supports_sahi": True,
+        "weights": path,
+        "confidence_threshold": None,  # the app's own YOLO/SAHI settings apply
+    }
+
+
+def _three_numbers(value, default: list[float]) -> list[float] | None:
+    if value is None:
+        return default
+    if isinstance(value, list) and len(value) == 3 and all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in value
+    ):
+        return [float(v) for v in value]
+    return None
+
+
+def _stamp(path: Path) -> str:
+    st = path.stat()
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def _onnx_folder_info(folder: Path) -> tuple[dict | None, str | None]:
+    """Read one model folder. Returns (info, None), (None, problem) or (None, None) if unrelated."""
+    info_path = folder / MODEL_INFO_FILE
+    onnx_files = sorted(p for p in folder.glob("*.onnx") if p.is_file())
+    if not info_path.is_file():
+        # A folder with neither file is not meant to be a model (e.g. a backup dir).
+        return None, (f"{MODEL_INFO_FILE} is missing next to the .onnx file" if onnx_files else None)
+
+    try:
+        meta = json.loads(info_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return None, f"{MODEL_INFO_FILE} could not be read ({e})"
+    if not isinstance(meta, dict):
+        return None, f"{MODEL_INFO_FILE} must be a JSON object"
+
+    named = meta.get("onnx_file")
+    if named:
+        if not isinstance(named, str) or Path(named).name != named or not named.endswith(".onnx"):
+            return None, '"onnx_file" must be the name of a .onnx file inside the folder'
+        weights = folder / named
+        if not weights.is_file():
+            return None, f"{named} (named in {MODEL_INFO_FILE}) is not in the folder"
+    elif not onnx_files:
+        return None, "no .onnx file in the folder"
+    elif len(onnx_files) > 1:
+        return None, f'{len(onnx_files)} .onnx files and {MODEL_INFO_FILE} does not name one ("onnx_file")'
+    else:
+        weights = onnx_files[0]
+
+    framework = str(meta.get("framework") or "").strip().lower()
+    outputs = meta.get("outputs")
+    if framework:
+        if framework not in _DETR_FRAMEWORK_NAMES:
+            return None, f'framework "{meta.get("framework")}" is not supported (RF-DETR style ONNX exports are)'
+    elif not (isinstance(outputs, dict) and all(k in outputs for k in _DETR_OUTPUTS)):
+        return None, (
+            f"{MODEL_INFO_FILE} does not say what kind of model this is: expected the RF-DETR "
+            'export\'s "outputs" (dets, labels) or a "framework" entry'
+        )
+
+    spec = meta.get("input") if isinstance(meta.get("input"), dict) else {}
+    shape = spec.get("shape")
+    input_size = None  # None: taken from the .onnx file when it is loaded
+    if shape is not None:
+        if not (
+            isinstance(shape, list) and len(shape) == 4
+            and all(isinstance(v, int) and v > 0 for v in shape[1:])
+            and shape[1] == 3 and shape[2] == shape[3]
+        ):
+            return None, 'input "shape" must look like [1, 3, N, N]'
+        input_size = shape[2]
+    mean = _three_numbers(spec.get("mean"), _IMAGENET_MEAN)
+    std = _three_numbers(spec.get("std"), _IMAGENET_STD)
+    if mean is None or std is None or not all(v > 0 for v in std):
+        return None, 'input "mean" and "std" must each be 3 numbers'
+
+    classes = meta.get("classes")
+    if not (isinstance(classes, list) and classes and all(isinstance(c, str) and c.strip() for c in classes)):
+        return None, f'{MODEL_INFO_FILE} needs a "classes" list of class names'
+
+    threshold = meta.get("recommended_confidence_threshold")
+    if threshold is None and isinstance(meta.get("metrics"), dict):
+        threshold = meta["metrics"].get("recommended_confidence_threshold")
+    source = "model_info.json"
+    if threshold is None:
+        threshold, source = config.ONNX_DETECTION_DEFAULT_CONF, "default"
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 < threshold < 1:
+        return None, '"recommended_confidence_threshold" must be a number between 0 and 1'
+
+    return {
+        "name": folder.name,
+        "framework": DETR_ONNX_FRAMEWORK,
+        "supports_sahi": False,
+        "folder": folder,
+        "weights": weights,
+        "info_file": info_path,
+        "display_name": str(meta.get("model") or "").strip() or None,
+        "input_size": input_size,
+        "mean": mean,
+        "std": std,
+        "classes": [c.strip() for c in classes],
+        "confidence_threshold": round(float(threshold), 4),
+        "threshold_source": source,
+        "fingerprint_stamp": f"{_stamp(weights)}|{_stamp(info_path)}",
+    }, None
+
+
+def _scan_detection_models() -> tuple[dict[str, dict], list[dict]]:
+    models: dict[str, dict] = {}
+    problems: list[dict] = []
     if not config.YOLO_DIR.exists():
-        return []
-    return sorted(p.name for p in config.YOLO_DIR.glob("*.pt"))
+        return models, problems
+    for path in sorted(config.YOLO_DIR.iterdir()):
+        if path.name.startswith((".", "__")):
+            continue
+        if path.is_file() and path.suffix == ".pt":
+            models[path.name] = _yolo_info(path)
+        elif path.is_file() and path.suffix == ".onnx":
+            problems.append({
+                "name": path.name,
+                "problem": f"an ONNX model needs its own folder with its {MODEL_INFO_FILE}, "
+                           f"e.g. {path.stem}/{path.name}",
+            })
+        elif path.is_dir():
+            info, problem = _onnx_folder_info(path)
+            if info:
+                models[path.name] = info
+            elif problem:
+                problems.append({"name": path.name, "problem": problem})
+    return models, problems
+
+
+def list_detection_models() -> list[str]:
+    return sorted(_scan_detection_models()[0])
+
+
+def detection_info(name: str) -> dict | None:
+    """Everything the pipeline needs about one detection model, or None."""
+    return _scan_detection_models()[0].get(name)
+
+
+def detection_models() -> list[dict]:
+    """JSON-safe description of each detection model, for the configuration page."""
+    out = []
+    for name, info in sorted(_scan_detection_models()[0].items()):
+        out.append({
+            "name": name,
+            "framework": info["framework"],
+            "framework_label": FRAMEWORK_LABELS[info["framework"]],
+            "supports_sahi": info["supports_sahi"],
+            "display_name": info.get("display_name"),
+            "input_size": info.get("input_size"),
+            "classes": info.get("classes"),
+            "confidence_threshold": info.get("confidence_threshold"),
+            "threshold_source": info.get("threshold_source"),
+        })
+    return out
+
+
+def detection_problems() -> list[dict]:
+    """Things in models/yolo that look like a model but cannot be used, and why."""
+    return _scan_detection_models()[1]
+
+
+def _supports_sahi(name: str) -> bool:
+    info = detection_info(name)
+    return info is None or info["supports_sahi"]
+
+
+# ---------- Registry: classification models ----------
 
 
 def list_classification_models() -> list[str]:
@@ -112,6 +306,9 @@ def load() -> dict:
         if known:
             cfg["known_labels"] = known
 
+    if not _supports_sahi(cfg["detection_model"]):
+        cfg["use_sahi"] = False  # whole-image models (RF-DETR) are never sliced
+
     _CACHE = dict(cfg)
     return dict(cfg)
 
@@ -127,7 +324,7 @@ def save(update: dict) -> dict:
     if cls not in list_classification_models():
         raise ValueError(f"Unknown classification model: {cls}")
 
-    use_sahi = bool(update.get("use_sahi", current["use_sahi"]))
+    use_sahi = bool(update.get("use_sahi", current["use_sahi"])) and _supports_sahi(det)
 
     valid = set(selectable_labels(cls))
     known = [l for l in update.get("known_labels", []) if l in valid]
@@ -152,6 +349,13 @@ def save(update: dict) -> dict:
 # ---------- Active accessors (used by the pipeline) ----------
 def active_detection_path() -> Path:
     return detection_path(load()["detection_model"])
+
+
+def active_detection_info() -> dict:
+    """The selected detection model. A missing one is treated as a YOLO file, so
+    loading it fails with the usual "model not found" error."""
+    name = load()["detection_model"]
+    return detection_info(name) or _yolo_info(detection_path(name))
 
 
 def active_classification_dir() -> Path:
@@ -182,11 +386,12 @@ def active_model_id() -> str:
     from app import db  # imported here: model_config is used in DB-less contexts too
 
     cfg = load()
+    det = active_detection_info()
     details = {
         "detection_model": cfg["detection_model"],
         "classification_model": cfg["classification_model"],
         "use_sahi": bool(cfg["use_sahi"]),
-        "detection_conf": config.DATA_DUMP_DETECTION_CONF,
+        "detection_conf": det["confidence_threshold"] or config.DATA_DUMP_DETECTION_CONF,
         "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,
         "known_label_count": len(cfg["known_labels"]),
     }
@@ -261,6 +466,14 @@ def _dir_fingerprint(model_dir: Path, cache: dict) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
+def _detection_fingerprint(info: dict, cache: dict) -> str:
+    if info["framework"] == YOLO_FRAMEWORK:
+        return _file_fingerprint(info["weights"], cache)
+    # The JSON is part of the model: its threshold, size and normalisation change the boxes.
+    parts = [_file_fingerprint(info["weights"], cache), _file_fingerprint(info["info_file"], cache)]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
 def active_config_key() -> str:
     """Stable id for "this exact inference setup".
 
@@ -274,12 +487,13 @@ def active_config_key() -> str:
         return _KEY_CACHE
 
     cfg = load()
+    det = active_detection_info()
     cache = _fingerprint_cache()
     before = json.dumps(cache, sort_keys=True)
 
     parts: dict = {
         "detection_model": cfg["detection_model"],
-        "detection_fp": _file_fingerprint(active_detection_path(), cache),
+        "detection_fp": _detection_fingerprint(det, cache),
         "classification_model": cfg["classification_model"],
         "classification_fp": _dir_fingerprint(active_classification_dir(), cache),
         "use_sahi": bool(cfg["use_sahi"]),
@@ -288,6 +502,11 @@ def active_config_key() -> str:
         "known_labels": sorted(cfg["known_labels"]),
         "model_id": cfg.get("model_id") or config.DEFAULT_MODEL_ID,
     }
+    if det["framework"] != YOLO_FRAMEWORK:
+        # Added only for non-YOLO models, so existing YOLO setups keep their key
+        # (and their already processed images are not re-inferred).
+        parts["detection_framework"] = det["framework"]
+        parts["detection_conf"] = det["confidence_threshold"]
     if cfg["use_sahi"]:
         # Slicing parameters change the detections themselves, so they are part
         # of the identity only when slicing is actually on.
@@ -311,9 +530,12 @@ def active_config_key() -> str:
 def active_config_summary() -> dict:
     """Human-readable version of what the config key stands for."""
     cfg = load()
+    det = active_detection_info()
     return {
         "config_key": active_config_key(),
         "detection_model": cfg["detection_model"],
+        "detection_framework": det["framework"],
+        "detection_conf": det["confidence_threshold"],
         "classification_model": cfg["classification_model"],
         "use_sahi": bool(cfg["use_sahi"]),
         "classifier_threshold": config.SWINV2_CONFIDENCE_THRESHOLD,

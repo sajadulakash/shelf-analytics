@@ -6,6 +6,8 @@ export default function ModelConfig() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detModels, setDetModels] = useState([]);
+  const [detDetails, setDetDetails] = useState({});
+  const [detProblems, setDetProblems] = useState([]);
   const [clsModels, setClsModels] = useState([]);
   const [detModel, setDetModel] = useState("");
   const [clsModel, setClsModel] = useState("");
@@ -20,6 +22,8 @@ export default function ModelConfig() {
       try {
         const c = await getModelConfig();
         setDetModels(c.detection_models);
+        setDetDetails(Object.fromEntries((c.detection_model_details || []).map((d) => [d.name, d])));
+        setDetProblems(c.detection_problems || []);
         setClsModels(c.classification_models);
         setDetModel(c.detection_model);
         setClsModel(c.classification_model);
@@ -57,6 +61,11 @@ export default function ModelConfig() {
 
   const allSelected = labels.length > 0 && known.size === labels.length;
 
+  // RF-DETR style models run on the whole image at their own size; SAHI never applies.
+  const det = detDetails[detModel];
+  const detLabel = det?.framework_label || "YOLO";
+  const supportsSahi = det ? det.supports_sahi : true;
+
   function toggleAll() {
     setSaved(false);
     setKnown(allSelected ? new Set() : new Set(labels));
@@ -70,12 +79,13 @@ export default function ModelConfig() {
       const res = await saveModelConfig({
         detection_model: detModel,
         classification_model: clsModel,
-        use_sahi: useSahi,
+        use_sahi: useSahi && supportsSahi,
         known_labels: [...known],
       });
       setLabels(res.labels);
       setKnown(new Set(res.known_labels));
-      setUseSahi(res.use_sahi);
+      if (supportsSahi) setUseSahi(res.use_sahi); // keep the YOLO choice while an RF-DETR model is saved
+      setDetProblems(res.detection_problems || []);
       setSaved(true);
     } catch (e) {
       setError(e.message);
@@ -112,12 +122,25 @@ export default function ModelConfig() {
       {/* Models */}
       <Card className="p-6">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Detection · YOLO">
+          <Field label={`Detection · ${detLabel}`}>
             <Select value={detModel} onChange={(e) => { setDetModel(e.target.value); setSaved(false); }}>
               {detModels.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m} value={m}>
+                  {m} · {detDetails[m]?.framework_label || "YOLO"}
+                </option>
               ))}
             </Select>
+            <p className="mt-2 text-xs text-muted">
+              {det && !det.supports_sahi ? (
+                <>
+                  {det.display_name || "Transformer detector"} · {det.input_size ? `${det.input_size}×${det.input_size}, ` : ""}
+                  cut-off {Math.round(det.confidence_threshold * 1000) / 10}%
+                  {det.threshold_source === "default" ? " (default — not in model_info.json)" : " from model_info.json"}
+                </>
+              ) : (
+                "Ultralytics YOLO weights (.pt)"
+              )}
+            </p>
           </Field>
 
           <Field label="Classification · SwinV2">
@@ -129,12 +152,42 @@ export default function ModelConfig() {
           </Field>
 
           <Field label="Detection mode">
-            <Select value={useSahi ? "sahi" : "full"} onChange={(e) => { setUseSahi(e.target.value === "sahi"); setSaved(false); }}>
-              <option value="sahi">With SAHI (sliced)</option>
-              <option value="full">Without SAHI (full frame)</option>
-            </Select>
+            {supportsSahi ? (
+              <Select value={useSahi ? "sahi" : "full"} onChange={(e) => { setUseSahi(e.target.value === "sahi"); setSaved(false); }}>
+                <option value="sahi">With SAHI (sliced)</option>
+                <option value="full">Without SAHI (full frame)</option>
+              </Select>
+            ) : (
+              <>
+                <Select value="full" disabled className="cursor-not-allowed opacity-60">
+                  <option value="full">Whole image (no SAHI)</option>
+                </Select>
+                <p className="mt-2 text-xs text-muted">
+                  {detLabel} models were trained and scored on the whole image, so they are never sliced.
+                </p>
+              </>
+            )}
           </Field>
         </div>
+
+        {detProblems.length > 0 && (
+          <div className="mt-4 rounded-md border border-[#f0d9b5] bg-ambersoft px-4 py-3 text-sm text-[#7a4d0b]" role="status">
+            <div className="font-bold">
+              {detProblems.length === 1 ? "1 item" : `${detProblems.length} items`} in models/yolo could not be used as a detection model
+            </div>
+            <ul className="mt-1.5 space-y-1">
+              {detProblems.map((p) => (
+                <li key={p.name}>
+                  <span className="mono font-semibold">{p.name}</span> — {p.problem}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs">
+              A YOLO model is a <span className="mono">.pt</span> file. An RF-DETR model is a folder holding one{" "}
+              <span className="mono">.onnx</span> file and its <span className="mono">model_info.json</span>.
+            </p>
+          </div>
+        )}
       </Card>
 
       {/* Known labels */}

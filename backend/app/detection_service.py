@@ -1,9 +1,15 @@
 """Product detection and crop extraction.
 
-Detection runs SAHI (Slicing Aided Hyper Inference) over an ultralytics YOLO
-model by default, which tiles the high-resolution shelf image and merges the
-per-slice predictions. Set ``USE_SAHI=0`` to fall back to a single full-frame
-``YOLO.predict`` pass. Either path produces the same crop/bbox contract.
+The selected detection model decides how detection runs:
+
+* **YOLO** (a ``.pt`` file): SAHI (Slicing Aided Hyper Inference) tiles the
+  high-resolution shelf image and merges the per-slice predictions, or, with
+  SAHI off, a single full-frame ``YOLO.predict`` pass.
+* **RF-DETR style ONNX** (a model folder with ``model_info.json``): one pass
+  over the whole image at the model's input size, with the model's own
+  confidence cut-off - see ``onnx_detector``.
+
+Every path produces the same crop/bbox contract.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import numpy as np
 from PIL import Image
 from ultralytics import YOLO
 
-from app import config, model_config
+from app import config, model_config, onnx_detector
 
 
 @dataclass
@@ -125,6 +131,32 @@ def _detect_with_sahi(image_bytes: bytes, model_path: Path) -> list[_RawBox]:
     return boxes
 
 
+def _detect_with_detr_onnx(image_bgr: np.ndarray, info: dict) -> list[_RawBox]:
+    """Whole-image pass of an RF-DETR style ONNX model at its own cut-off.
+
+    The image is the already decoded (and EXIF-rotated) BGR array, so the boxes
+    land in exactly the pixel space the crops are cut from.
+    """
+    detector = onnx_detector.get_detector(info)
+    pil_image = Image.fromarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
+    return [
+        _RawBox(b.x1, b.y1, b.x2, b.y2, b.score, b.class_id, b.class_name)
+        for b in detector.predict(pil_image)
+    ]
+
+
+def _detect(image_bytes: bytes, image_bgr: np.ndarray, conf_threshold: float, iou_threshold: float) -> list[_RawBox]:
+    """Run the active detection model. ``conf_threshold``/``iou_threshold`` apply
+    to the plain YOLO pass only; SAHI and ONNX models use their own settings."""
+    info = model_config.active_detection_info()
+    if info["framework"] == model_config.DETR_ONNX_FRAMEWORK:
+        return _detect_with_detr_onnx(image_bgr, info)
+    det_path = info["weights"]
+    if model_config.active_use_sahi():
+        return _detect_with_sahi(image_bytes, det_path)
+    return _detect_with_yolo(image_bgr, det_path, conf_threshold, iou_threshold)
+
+
 def detect_and_crop_products(
     image_bytes: bytes,
     conf_threshold: float = 0.25,
@@ -140,11 +172,7 @@ def detect_and_crop_products(
     if image_bgr is None:
         raise ValueError("Invalid image format.")
 
-    det_path = model_config.active_detection_path()
-    if model_config.active_use_sahi():
-        raw_boxes = _detect_with_sahi(image_bytes, det_path)
-    else:
-        raw_boxes = _detect_with_yolo(image_bgr, det_path, conf_threshold, iou_threshold)
+    raw_boxes = _detect(image_bytes, image_bgr, conf_threshold, iou_threshold)
 
     height, width = image_bgr.shape[:2]
     crops: list[DetectionCrop] = []
@@ -224,7 +252,7 @@ def detect_products(
 ) -> tuple[int, int, list[tuple[bytes, tuple[int, int, int, int]]]]:
     """Lean detection for the Data Dump pipeline.
 
-    Honours the active model config (SAHI on/off), skips annotation, and returns
+    Honours the active model config (model type, SAHI on/off), skips annotation, and returns
     ``(width, height, [(crop_jpeg, (x1, y1, x2, y2)), ...])`` in absolute pixels.
     Nothing is written to disk.
     """
@@ -237,11 +265,7 @@ def detect_products(
         raise ValueError("Invalid image format.")
 
     conf = config.DATA_DUMP_DETECTION_CONF if conf_threshold is None else conf_threshold
-    det_path = model_config.active_detection_path()
-    if model_config.active_use_sahi():
-        raw_boxes = _detect_with_sahi(image_bytes, det_path)
-    else:
-        raw_boxes = _detect_with_yolo(image_bgr, det_path, conf, 0.45)
+    raw_boxes = _detect(image_bytes, image_bgr, conf, 0.45)
 
     height, width = image_bgr.shape[:2]
     crops: list[tuple[bytes, tuple[int, int, int, int]]] = []

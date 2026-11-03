@@ -35,8 +35,13 @@ MANAGED_LABELS_FILE = DATA_DIR / "managed_labels.json"
 SHOP_IMAGES_DIR = Path(os.environ.get("SHOP_IMAGES_DIR", BASE_DIR / "shop-images"))
 SHOP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-# Model registry. Detection weights live in models/yolo/*.pt, classification
-# models in models/swinv2/<name>/ (each a HF model dir with config.json).
+# Model registry. Detection models live in models/yolo/, in either form:
+#   * an ultralytics YOLO file dropped straight in:  models/yolo/best.pt
+#   * a folder named after the model with one .onnx file and the export's
+#     model_info.json (RF-DETR and other DETR-style exports):
+#       models/yolo/rfdetr_2xl_v4/{product_detector.onnx, model_info.json}
+# Classification models live in models/swinv2/<name>/ (each a HF model dir
+# with config.json).
 MODELS_DIR = BASE_DIR / "models"
 YOLO_DIR = MODELS_DIR / "yolo"
 SWINV2_DIR = MODELS_DIR / "swinv2"
@@ -80,6 +85,14 @@ SAHI_CONFIDENCE_THRESHOLD = float(os.environ.get("SAHI_CONFIDENCE_THRESHOLD", "0
 SAHI_POSTPROCESS_TYPE = os.environ.get("SAHI_POSTPROCESS_TYPE", "GREEDYNMM")
 SAHI_MATCH_METRIC = os.environ.get("SAHI_MATCH_METRIC", "IOS")
 SAHI_MATCH_THRESHOLD = float(os.environ.get("SAHI_MATCH_THRESHOLD", "0.2"))
+
+# ---------- Detection: ONNX (RF-DETR style) models ----------
+# Run on the GPU through onnxruntime-gpu; "cpu" forces the CPU. If CUDA is not
+# available the model still runs on the CPU and a warning is logged.
+ONNX_DETECTION_DEVICE = os.environ.get("ONNX_DETECTION_DEVICE", "cuda").strip().lower()
+# Confidence cut-off for an ONNX model whose model_info.json gives no
+# recommended_confidence_threshold. The export's own value always wins.
+ONNX_DETECTION_DEFAULT_CONF = float(os.environ.get("ONNX_DETECTION_DEFAULT_CONF", "0.4"))
 
 # Max concurrent crop classifications (Vision + Gemini calls)
 CLASSIFICATION_CONCURRENCY = int(os.environ.get("CLASSIFICATION_CONCURRENCY", "3"))
