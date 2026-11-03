@@ -205,17 +205,27 @@ def detect_and_crop_products(
             )
         )
 
-    # Draw green bounding boxes with OpenCV instead of YOLO default colours
+    # Draw green bounding boxes with OpenCV instead of YOLO default colours.
+    # Thin lines (2px on a typical 3-4k shelf photo, 1px on small images) and
+    # only the confidence as the label: the class is always "product", and on
+    # a dense shelf the longer label hid the products themselves.
     annotated_bgr = image_bgr.copy()
     green = (0, 255, 0)
+    long_side = max(width, height)
+    line = max(1, round(long_side / 2000))
+    # Small percentage labels that keep the same size relative to the photo, so
+    # a small image does not get labels as big as the products.
+    font_scale = min(1.0, max(0.3, long_side / 5300))  # 0.3 at 1600px, 0.62 at 3264px
+    font_weight = 2 if font_scale >= 0.6 else 1
+    pad = max(2, round(font_scale * 5))
     for crop in crops:
         b = crop.bbox
-        cv2.rectangle(annotated_bgr, (b["x1"], b["y1"]), (b["x2"], b["y2"]), green, 3)
-        label_text = f"{b['class_name']} {b['confidence']:.0%}"
-        (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        cv2.rectangle(annotated_bgr, (b["x1"], b["y1"] - th - 8), (b["x1"] + tw + 4, b["y1"]), green, -1)
-        cv2.putText(annotated_bgr, label_text, (b["x1"] + 2, b["y1"] - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.rectangle(annotated_bgr, (b["x1"], b["y1"]), (b["x2"], b["y2"]), green, line)
+        label_text = f"{b['confidence']:.0%}"
+        (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_weight)
+        cv2.rectangle(annotated_bgr, (b["x1"], b["y1"] - th - 2 * pad), (b["x1"] + tw + 2 * pad, b["y1"]), green, -1)
+        cv2.putText(annotated_bgr, label_text, (b["x1"] + pad, b["y1"] - pad),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), font_weight, cv2.LINE_AA)
     annotated_bytes = _encode_jpg(annotated_bgr)
     return annotated_bytes, crops
 
