@@ -205,29 +205,42 @@ def detect_and_crop_products(
             )
         )
 
-    # Draw green bounding boxes with OpenCV instead of YOLO default colours.
-    # Thin lines (2px on a typical 3-4k shelf photo, 1px on small images) and
-    # only the confidence as the label: the class is always "product", and on
-    # a dense shelf the longer label hid the products themselves.
+    # Only the confidence as the label: the class is always "product", and on
+    # a dense shelf a longer label hid the products themselves.
     annotated_bgr = image_bgr.copy()
-    green = (0, 255, 0)
+    _draw_labeled_boxes(
+        annotated_bgr,
+        [(c.bbox["x1"], c.bbox["y1"], c.bbox["x2"], c.bbox["y2"], f"{c.bbox['confidence']:.0%}") for c in crops],
+    )
+    annotated_bytes = _encode_jpg(annotated_bgr)
+    return annotated_bytes, crops
+
+
+def _draw_labeled_boxes(
+    image_bgr: np.ndarray,
+    boxes: list[tuple[int, int, int, int, str]],
+    color: tuple[int, int, int] = (0, 255, 0),
+) -> None:
+    """Draw thin boxes with small labels, in place.
+
+    Line width and text size follow the photo's size, so the overlay looks the
+    same on screen for a small image and a 4k one: 2px lines on a typical 3-4k
+    shelf photo (1px on small images), and labels that stay small next to the
+    products instead of covering them.
+    """
+    height, width = image_bgr.shape[:2]
     long_side = max(width, height)
     line = max(1, round(long_side / 2000))
-    # Small percentage labels that keep the same size relative to the photo, so
-    # a small image does not get labels as big as the products.
     font_scale = min(1.0, max(0.3, long_side / 5300))  # 0.3 at 1600px, 0.62 at 3264px
     font_weight = 2 if font_scale >= 0.6 else 1
     pad = max(2, round(font_scale * 5))
-    for crop in crops:
-        b = crop.bbox
-        cv2.rectangle(annotated_bgr, (b["x1"], b["y1"]), (b["x2"], b["y2"]), green, line)
-        label_text = f"{b['confidence']:.0%}"
-        (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_weight)
-        cv2.rectangle(annotated_bgr, (b["x1"], b["y1"] - th - 2 * pad), (b["x1"] + tw + 2 * pad, b["y1"]), green, -1)
-        cv2.putText(annotated_bgr, label_text, (b["x1"] + pad, b["y1"] - pad),
+    for x1, y1, x2, y2, label in boxes:
+        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), color, line)
+        text = str(label)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_weight)
+        cv2.rectangle(image_bgr, (x1, y1 - th - 2 * pad), (x1 + tw + 2 * pad, y1), color, -1)
+        cv2.putText(image_bgr, text, (x1 + pad, y1 - pad),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), font_weight, cv2.LINE_AA)
-    annotated_bytes = _encode_jpg(annotated_bgr)
-    return annotated_bytes, crops
 
 
 def annotate_boxes(
@@ -245,14 +258,7 @@ def annotate_boxes(
     if image_bgr is None:
         raise ValueError("Invalid image format.")
 
-    for x1, y1, x2, y2, label in boxes:
-        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), color, 3)
-        text = str(label)
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        cv2.rectangle(image_bgr, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
-        cv2.putText(image_bgr, text, (x1 + 2, y1 - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
-
+    _draw_labeled_boxes(image_bgr, boxes, color)
     return _encode_jpg(image_bgr)
 
 
